@@ -1,0 +1,31 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"selfRequestsOnly":true}'>
+<title>{{.Title}} · ClamAV Console</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/htmx.min.js"></script>
+</head>
+<body{{if .Session}} hx-headers='{"X-CSRF-Token":"{{.Session.CSRFToken}}"}'{{end}}>
+{{if .Session}}
+<header class="top">
+  <a class="brand" href="/tenants">ClamAV Console</a>
+  <a href="/tenants">Tenants</a>
+  <a href="/audit">Audit log</a>
+  <a href="/users">Users</a>
+  <span class="spacer"></span>
+  <a href="/account">{{.Session.User.Email}}</a>
+  <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{.Session.CSRFToken}}"><button type="submit">Log out</button></form>
+</header>
+{{end}}
+<main>
+{{with .Flash}}<div class="flash">{{.}}</div>{{end}}
+{{with .Error}}<div class="flash error">{{.}}</div>{{end}}
+{{template "content" .}}
+</main>
+</body>
+</html>{{end}}
+
+{{define "csrf"}}<input type="hidden" name="csrf_token" value="{{.Session.CSRFToken}}">{{end}}

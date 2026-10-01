@@ -1,0 +1,98 @@
+# ClamAV console: Caddy (TLS, only published ports) -> server -> Postgres.
+# All secrets come from deploy/.env (gitignored). See .env.example and docs/operations.md.
+name: clamav-console
+
+x-server-image: &server-image
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile.server
+    args:
+      VERSION: ${CAV_VERSION:-dev}
+  image: clamav-console:${CAV_VERSION:-dev}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cav_owner
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: cav
+      CAV_APP_DB_PASSWORD: ${CAV_APP_DB_PASSWORD:?set CAV_APP_DB_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres-init.sh:/docker-entrypoint-initdb.d/10-cav-roles.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cav_owner -d cav"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [internal]
+
+  # One-shot: applies migrations as the owner role, so the long-running
+  # server never holds owner credentials.
+  migrate:
+    <<: *server-image
+    command: ["migrate"]
+    environment:
+      MIGRATE_DATABASE_URL: postgres://cav_owner:${POSTGRES_PASSWORD}@postgres:5432/cav
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [internal]
+
+  server:
+    <<: *server-image
+    restart: unless-stopped
+    command: ["serve"]
+    environment:
+      DATABASE_URL: postgres://cav_app:${CAV_APP_DB_PASSWORD}@postgres:5432/cav
+      PUBLIC_URL: https://${CAV_HOSTNAME:?set CAV_HOSTNAME in .env}
+      TOKEN_HASH_KEY: ${TOKEN_HASH_KEY:?set TOKEN_HASH_KEY in .env}
+      TOKEN_HASH_KEY_PREVIOUS: ${TOKEN_HASH_KEY_PREVIOUS:-}
+      ADMIN_ALLOWED_CIDRS: ${ADMIN_ALLOWED_CIDRS:?set ADMIN_ALLOWED_CIDRS in .env}
+      AGENT_OFFLINE_AFTER_SECONDS: ${AGENT_OFFLINE_AFTER_SECONDS:-180}
+      # Only Caddy, on the internal network, may set X-Forwarded-For.
+      TRUSTED_PROXIES: 172.30.0.0/24
+      DOWNLOADS_DIR: /srv/downloads
+    volumes:
+      - ${CAV_DOWNLOADS_PATH:-./downloads}:/srv/downloads:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [internal]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      CAV_HOSTNAME: ${CAV_HOSTNAME}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+      ADMIN_ALLOWED_CIDRS: ${ADMIN_ALLOWED_CIDRS}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [server]
+    networks: [internal]
+
+networks:
+  internal:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

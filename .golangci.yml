@@ -1,0 +1,45 @@
+version: "2"
+linters:
+  enable:
+    - gosec
+    - forbidigo
+    - depguard
+    - errorlint
+    - bodyclose
+  settings:
+    forbidigo:
+      forbid:
+        # CLAUDE.md rule 1: no process execution in the agent. Applies to the
+        # agent packages via the exclusion below being limited to non-agent code.
+        - pattern: ^exec\.Command(Context)?$
+          msg: "os/exec is banned in the agent (CLAUDE.md rule 1)"
+    depguard:
+      rules:
+        agent-no-exec:
+          files:
+            - "**/internal/agent/**"
+            - "**/cmd/agent/**"
+          deny:
+            - pkg: os/exec
+              desc: "the agent must never execute processes (CLAUDE.md rule 1)"
+        agent-no-server:
+          files:
+            - "**/internal/agent/**"
+            - "**/cmd/agent/**"
+          deny:
+            - pkg: github.com/Soup9x/Lake-Effect-Bouy/internal/server
+              desc: "agent must not import server code"
+        server-no-agent:
+          files:
+            - "**/internal/server/**"
+            - "**/cmd/server/**"
+          deny:
+            - pkg: github.com/Soup9x/Lake-Effect-Bouy/internal/agent
+              desc: "server must not import agent code"
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters: [gosec]
+      # Tooling outside the agent may run processes.
+      - path: (cmd/release-sign|scripts)/
+        linters: [forbidigo]

@@ -1,0 +1,26 @@
+{
+	email {$ACME_EMAIL}
+}
+
+{$CAV_HOSTNAME} {
+	encode gzip
+	header Strict-Transport-Security "max-age=31536000"
+
+	# Public: only what agents need (design 0a.4).
+	@public path /agent/v1/* /downloads/* /healthz
+	handle @public {
+		reverse_proxy server:8080
+	}
+
+	# Everything else (UI, /readyz) only from the admin networks, e.g. VPN or
+	# Tailscale. ADMIN_ALLOWED_CIDRS is space-separated. The server checks the
+	# same list again.
+	@admin remote_ip {$ADMIN_ALLOWED_CIDRS}
+	handle @admin {
+		reverse_proxy server:8080
+	}
+
+	handle {
+		respond 404
+	}
+}

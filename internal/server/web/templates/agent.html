@@ -1,0 +1,35 @@
+{{define "content"}}
+{{$a := .Data.Agent}}
+<p class="small"><a href="/tenants/{{$a.TenantID}}">← {{$a.TenantName}}</a></p>
+<h1>{{$a.Hostname}}</h1>
+<div class="card">
+<table>
+  <tr><th>Status</th><td>{{if $a.RevokedAt}}<span class="badge">revoked {{fmtTime $a.RevokedAt}}</span>{{else if $a.Online .Data.Now .Data.OfflineAfter}}<span class="dot on"></span>online{{else}}<span class="dot off"></span>offline{{end}}</td></tr>
+  <tr><th>Last heartbeat</th><td>{{if $a.LastHeartbeatAt}}{{fmtTime $a.LastHeartbeatAt}} ({{ago $a.LastHeartbeatAt}}){{else}}never{{end}}</td></tr>
+  <tr><th>OS</th><td>{{$a.OSName}} {{$a.OSVersion}} ({{$a.OSFamily}}/{{$a.Arch}})</td></tr>
+  <tr><th>Agent version</th><td>{{$a.AgentVersion}}</td></tr>
+  <tr><th>ClamAV engine</th><td>{{deref $a.EngineVersion}}</td></tr>
+  <tr><th>Signatures</th><td>{{if $a.SignatureVersion}}{{derefInt $a.SignatureVersion}}, {{fmtTime $a.SignatureDate}} <span class="{{sigClass $a.SignatureDate}}">({{ago $a.SignatureDate}})</span>{{else}}n/a{{end}}</td></tr>
+  <tr><th>clamd</th><td><span class="{{clamdClass $a.ClamdStatus}}">{{$a.ClamdStatus}}</span>{{with $a.ClamdError}} <span class="muted small">{{.}}</span>{{end}}</td></tr>
+  <tr><th>Last IP</th><td>{{with $a.LastIP}}{{.}}{{end}}</td></tr>
+  <tr><th>Machine ID</th><td><code>{{$a.MachineID}}</code></td></tr>
+  <tr><th>Agent ID</th><td><code>{{$a.ID}}</code></td></tr>
+  <tr><th>Enrolled</th><td>{{fmtTime $a.EnrolledAt}}</td></tr>
+  <tr><th>Credential</th><td>{{if $a.CredentialRotatedAt}}rotated {{fmtTime $a.CredentialRotatedAt}}{{else}}original{{end}}{{if $a.RotateRequestedAt}} <span class="badge">rotation pending</span>{{end}}</td></tr>
+</table>
+</div>
+{{if not $a.RevokedAt}}
+<div class="actions">
+  <button class="secondary" hx-post="/agents/{{$a.ID}}/rotate" hx-confirm="Ask {{$a.Hostname}} to rotate its credential on its next heartbeat?">Rotate credential</button>
+  <button class="danger" hx-post="/agents/{{$a.ID}}/revoke" hx-confirm="Revoke {{$a.Hostname}}? The agent will stop and must be re-enrolled.">Revoke agent</button>
+</div>
+{{end}}
+<h2>Recent events</h2>
+<table>
+  <thead><tr><th>When</th><th>Event</th><th>Details</th></tr></thead>
+  <tbody>
+  {{range .Data.Events}}<tr><td>{{fmtTime .OccurredAt}}</td><td>{{.Type}}</td><td class="small muted">{{json .Details}}</td></tr>
+  {{else}}<tr><td colspan="3" class="muted">No events.</td></tr>{{end}}
+  </tbody>
+</table>
+{{end}}

@@ -1,0 +1,51 @@
+# systemd unit for the ClamAV console agent. Installed by install.sh.
+[Unit]
+Description=ClamAV console agent (reports clamd status to the MSP console)
+Documentation=https://github.com/Soup9x/Lake-Effect-Bouy/blob/main/docs/install-agent.md
+Wants=network-online.target
+After=network-online.target clamav-daemon.service clamd@scan.service
+
+[Service]
+Type=simple
+User=clamav-agent
+Group=clamav-agent
+ExecStart=/usr/local/bin/clamav-agent run --config /etc/clamav-agent/agent.yaml --credential /var/lib/clamav-agent/credential
+Restart=on-failure
+RestartSec=30s
+# 78 (EX_CONFIG) = credential revoked (401 agent_revoked) or unusable config.
+# Never restart in that case; re-enroll with install.sh --reinstall.
+RestartPreventExitStatus=78
+
+# /var/lib/clamav-agent, owned by User=, mode 0700; the only writable path.
+StateDirectory=clamav-agent
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/clamav-agent
+UMask=0077
+
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,34 @@
+{{define "content"}}
+<h1>Audit log</h1>
+<form class="inline" method="get" action="/audit">
+  <label>Tenant
+    <select name="tenant">
+      <option value="">All</option>
+      {{$sel := .Data.TenantID}}
+      {{range .Data.Tenants}}<option value="{{.ID}}" {{if eq (print .ID) $sel}}selected{{end}}>{{.Name}}</option>{{end}}
+    </select>
+  </label>
+  <label>Action starts with<input type="text" name="action" value="{{.Data.Filter.Action}}" placeholder="tenant."></label>
+  <label>Actor contains<input type="text" name="actor" value="{{.Data.Filter.Actor}}"></label>
+  <button type="submit" class="secondary">Filter</button>
+</form>
+<p></p>
+<table>
+  <thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Outcome</th><th>Tenant</th><th>Target</th><th>IP</th><th>Details</th></tr></thead>
+  <tbody>
+  {{range .Data.Rows}}
+    <tr>
+      <td class="small">{{fmtTime .OccurredAt}}</td>
+      <td>{{.ActorLabel}} <span class="muted small">({{.ActorType}})</span></td>
+      <td><code>{{.Action}}</code></td>
+      <td class="{{if eq .Outcome "success"}}ok{{else}}bad{{end}}">{{.Outcome}}</td>
+      <td>{{deref .TenantName}}</td>
+      <td class="small">{{.TargetType}} {{.TargetID}}</td>
+      <td class="small">{{deref .IP}}</td>
+      <td class="small muted">{{json .Details}}</td>
+    </tr>
+  {{else}}<tr><td colspan="8" class="muted">No entries.</td></tr>{{end}}
+  </tbody>
+</table>
+{{with .Data.NextURL}}<p><a href="{{.}}">Older entries →</a></p>{{end}}
+{{end}}
