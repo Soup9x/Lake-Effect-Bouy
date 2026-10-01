@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -95,5 +96,63 @@ func TestUsage(t *testing.T) {
 	}
 	if realMain([]string{"enroll"}) != exitUsage {
 		t.Fatal("enroll without --server")
+	}
+}
+
+// TestEnrollWithPrivateCA checks that --ca-cert-file lets the agent trust a
+// console whose certificate is not in the system trust store, and that the
+// setting is kept for later runs.
+func TestEnrollWithPrivateCA(t *testing.T) {
+	var beats atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST "+protocol.PathEnroll, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(201)
+		_ = json.NewEncoder(w).Encode(protocol.EnrollResponse{AgentID: "a1", Credential: "cav_agt_a1.secret", TenantName: "Acme"})
+	})
+	mux.HandleFunc("POST "+protocol.PathHeartbeat, func(w http.ResponseWriter, r *http.Request) {
+		beats.Add(1)
+		w.WriteHeader(401)
+		_ = json.NewEncoder(w).Encode(protocol.ErrorResponse{Error: protocol.ErrorBody{Code: protocol.ErrAgentRevoked}})
+	})
+	srv := httptest.NewTLSServer(mux)
+	defer srv.Close()
+
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "agent.yaml")
+	cred := filepath.Join(dir, "credential")
+	ca := filepath.Join(dir, "console-ca.pem")
+	if err := os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"enroll", "--server", srv.URL, "--config", cfg, "--credential", cred, "--clamd", "tcp://127.0.0.1:1"}
+
+	// Without the CA the console's certificate is untrusted.
+	t.Setenv("CAV_ENROLL_TOKEN", "cav_enr_TESTTOKEN")
+	if code := realMain(args); code == exitOK {
+		t.Fatal("enrolled without trusting the console's CA")
+	}
+	t.Setenv("CAV_ENROLL_TOKEN", "cav_enr_TESTTOKEN")
+	if code := realMain(append(args, "--ca-cert-file", "console-ca.pem")); code != exitUsage {
+		t.Fatalf("relative --ca-cert-file: exit %d, want %d", code, exitUsage)
+	}
+	t.Setenv("CAV_ENROLL_TOKEN", "cav_enr_TESTTOKEN")
+	if code := realMain(append(args, "--ca-cert-file", ca)); code != exitOK {
+		t.Fatalf("enroll with --ca-cert-file: exit %d", code)
+	}
+	if b, _ := os.ReadFile(cfg); !strings.Contains(string(b), "ca_cert_file: "+ca) {
+		t.Fatalf("ca_cert_file not saved in config:\n%s", b)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if code := runAgent(ctx, cfg, cred); code != exitConfig || beats.Load() != 1 {
+		t.Fatalf("run: exit %d after %d heartbeats, want %d after 1", code, beats.Load(), exitConfig)
+	}
+	// A broken CA file stops the agent at startup instead of retrying forever.
+	if err := os.WriteFile(ca, []byte("not a certificate"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code := runAgent(ctx, cfg, cred); code != exitConfig || beats.Load() != 1 {
+		t.Fatalf("run with broken CA file: exit %d after %d heartbeats", code, beats.Load())
 	}
 }

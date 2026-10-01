@@ -2,20 +2,31 @@
 # Installs the ClamAV console agent as the systemd service clamav-agent.
 #
 # Usage (as root):
+#   printf '%s\n' cav_enr_... | sh install.sh --server https://console.example.com --token-stdin
 #   CAV_SERVER_URL=https://console.example.com CAV_ENROLL_TOKEN=cav_enr_... sh install.sh
-#   sh install.sh --reinstall          # enroll again, replacing this machine's agent
+#   sh install.sh --reinstall ...      # enroll again, replacing this machine's agent
 #   sh install.sh --verify-only FILE SIGFILE   # only check a minisign signature
 #
-# Inputs (environment):
-#   CAV_SERVER_URL    required, https:// console URL
-#   CAV_ENROLL_TOKEN  required when enrolling (first install or --reinstall)
-#   CAV_CLAMD_ADDR    optional clamd address (unix:///path or tcp://127.0.0.1:3310);
-#                     default: auto-detect the clamd socket
+# Options (each can also be set in the environment):
+#   --server URL        CAV_SERVER_URL    required, https:// console URL
+#   --token-stdin       CAV_ENROLL_TOKEN  enrollment token, required when enrolling
+#                                         (first install or --reinstall); with
+#                                         --token-stdin it is read from stdin
+#   --ca-sha256 HEX     CAV_CA_SHA256     only for a console with a private CA:
+#                                         SHA-256 fingerprint of its CA certificate
+#   --clamd ADDR        CAV_CLAMD_ADDR    clamd address (unix:///path or
+#                                         tcp://127.0.0.1:3310); default: auto-detect
+#   --reinstall                           enroll again with a new token
 #
 # The agent binary and the systemd unit are downloaded from
 # $CAV_SERVER_URL/downloads/ and their minisign signatures are VERIFIED against
 # the public key embedded below before anything is installed. The key is
 # never fetched from the server.
+#
+# With --ca-sha256, the console's CA certificate is downloaded and used only
+# if its fingerprint matches; it is installed for the agent, which then trusts
+# only that CA for the console. Later upgrade runs reuse the installed CA;
+# --reinstall uses only what it is given.
 set -eu
 
 # Substituted by scripts/build-dist.sh. Release signing public key (minisign).
@@ -27,10 +38,14 @@ CONF_DIR=/etc/clamav-agent
 CONF_FILE=$CONF_DIR/agent.yaml
 STATE_DIR=/var/lib/clamav-agent
 CRED_FILE=$STATE_DIR/credential
+CA_FILE=$CONF_DIR/console-ca.pem
 AGENT_USER=clamav-agent
 SOCKET_CANDIDATES="/run/clamav/clamd.ctl /run/clamd.scan/clamd.sock /var/run/clamav/clamd.ctl"
 
 WORK=''
+# CA bundle for downloads from the console (private CA), or empty for the
+# system trust store.
+CA=''
 cleanup() { if [ -n "$WORK" ]; then rm -rf "$WORK"; fi; }
 trap cleanup EXIT INT TERM
 
@@ -164,12 +179,48 @@ minisign_verify() {
 
 download() { # URL DEST
     if command -v curl >/dev/null 2>&1; then
-        curl --proto '=https' --tlsv1.2 -fsSL -o "$2" "$1"
+        if [ -n "$CA" ]; then
+            curl --proto '=https' --tlsv1.2 -fsSL --cacert "$CA" -o "$2" "$1"
+        else
+            curl --proto '=https' --tlsv1.2 -fsSL -o "$2" "$1"
+        fi
     elif command -v wget >/dev/null 2>&1; then
-        wget --https-only -q -O "$2" "$1"
+        if [ -n "$CA" ]; then
+            wget --https-only --ca-certificate="$CA" -q -O "$2" "$1"
+        else
+            wget --https-only -q -O "$2" "$1"
+        fi
     else
         die "curl or wget is required"
     fi
+}
+
+# cert_fingerprint PEM_FILE: lowercase hex SHA-256 of the DER certificate.
+cert_fingerprint() {
+    openssl x509 -in "$1" -outform DER 2>/dev/null | sha256sum | cut -d' ' -f1
+}
+
+# fetch_console_ca BASE FINGERPRINT DEST: download the console's CA
+# certificate and accept it only if its fingerprint matches. It is fetched
+# without TLS verification because it is what TLS will be verified with;
+# the fingerprint, from the console admin, is what makes it trusted.
+fetch_console_ca() {
+    command -v openssl >/dev/null 2>&1 || die "openssl is required to check the console CA"
+    command -v sha256sum >/dev/null 2>&1 || die "sha256sum is required to check the console CA"
+    _url="$1/downloads/console-ca.pem"
+    if command -v curl >/dev/null 2>&1; then
+        curl --proto '=https' --tlsv1.2 -fsSk -o "$3" "$_url" || die "cannot download $_url"
+    elif command -v wget >/dev/null 2>&1; then
+        wget --https-only --no-check-certificate -q -O "$3" "$_url" || die "cannot download $_url"
+    else
+        die "curl or wget is required"
+    fi
+    [ "$(grep -c -- '-----BEGIN CERTIFICATE-----' "$3")" -eq 1 ] || die "$_url must hold exactly one certificate"
+    _got=$(cert_fingerprint "$3")
+    [ "$_got" = "$2" ] || die "console CA fingerprint mismatch (got ${_got:-nothing}, expected $2); NOT installing"
+    # Keep only the verified certificate, in canonical PEM.
+    openssl x509 -in "$3" -out "$3.pem" 2>/dev/null || die "cannot read the console CA certificate"
+    mv -f "$3.pem" "$3"
 }
 
 detect_arch() {
@@ -216,6 +267,21 @@ join_socket_group() { # SOCKET_PATH
 
 install_agent() {
     reinstall=$1
+    token_stdin=$2
+    if [ "$token_stdin" = 1 ]; then
+        # Read before anything else consumes stdin. The token never appears
+        # on a command line.
+        CAV_ENROLL_TOKEN=''
+        IFS= read -r CAV_ENROLL_TOKEN || true
+        CAV_ENROLL_TOKEN=$(printf '%s' "$CAV_ENROLL_TOKEN" | tr -d '\r')
+        [ -n "$CAV_ENROLL_TOKEN" ] || die "--token-stdin: no enrollment token on stdin"
+    fi
+    if [ -n "${CAV_ENROLL_TOKEN:-}" ]; then
+        case "$CAV_ENROLL_TOKEN" in
+            cav_enr_*) ;;
+            *) die "the enrollment token must start with cav_enr_" ;;
+        esac
+    fi
     [ "$(id -u)" -eq 0 ] || die "must be run as root"
     command -v systemctl >/dev/null 2>&1 || die "systemd is required"
     check_pubkey
@@ -236,6 +302,21 @@ install_agent() {
 
     arch=$(detect_arch)
     WORK=$(mktemp -d)
+
+    ca_fp=$(printf '%s' "${CAV_CA_SHA256:-}" | tr -d ':' | tr 'A-F' 'a-f')
+    if [ -n "$ca_fp" ]; then
+        printf '%s' "$ca_fp" | grep -Eq '^[0-9a-f]{64}$' || die "--ca-sha256 must be a SHA-256 fingerprint (64 hex characters)"
+        say "downloading the console CA and checking its fingerprint"
+        fetch_console_ca "$base" "$ca_fp" "$WORK/console-ca.pem"
+        CA=$WORK/console-ca.pem
+    elif [ "$reinstall" != 1 ] && [ -f "$CA_FILE" ]; then
+        # An upgrade keeps the trust set up at enrollment. A re-enrollment
+        # follows the command it was given (a console may have moved to a
+        # public certificate).
+        CA=$CA_FILE
+        say "using the console CA installed at $CA_FILE"
+    fi
+
     bin="clamav-agent_linux_${arch}"
     say "downloading $bin from $base/downloads/"
     download "$base/downloads/$bin" "$WORK/$bin"
@@ -271,6 +352,15 @@ install_agent() {
     install -d -m 0755 -o root -g root "$CONF_DIR"
     install -d -m 0700 -o "$AGENT_USER" -g "$AGENT_USER" "$STATE_DIR"
 
+    ca_arg=''
+    if [ -n "$CA" ]; then
+        if [ "$CA" != "$CA_FILE" ]; then
+            install -m 0644 -o root -g root "$CA" "$CA_FILE"
+            say "installed the console CA at $CA_FILE"
+        fi
+        ca_arg="--ca-cert-file $CA_FILE"
+    fi
+
     if [ "$need_enroll" = 1 ]; then
         say "enrolling with $base (clamd $clamd_addr)"
         replace=''
@@ -278,9 +368,16 @@ install_agent() {
         # The token is passed in the environment, never on the command line.
         # shellcheck disable=SC2086
         CAV_ENROLL_TOKEN="$CAV_ENROLL_TOKEN" "$BIN_DST" enroll --server "$base" --clamd "$clamd_addr" \
-            --config "$CONF_FILE" --credential "$CRED_FILE" $replace || die "enrollment failed"
+            --config "$CONF_FILE" --credential "$CRED_FILE" $replace $ca_arg || die "enrollment failed"
+        if [ -z "$CA" ] && [ -f "$CA_FILE" ]; then
+            rm -f "$CA_FILE"
+            say "removed the console CA from an earlier enrollment (no longer used)"
+        fi
     else
         say "already enrolled; keeping the existing credential (use --reinstall to re-enroll)"
+        if [ -n "$CA" ] && ! grep -q '^ca_cert_file:' "$CONF_FILE" 2>/dev/null; then
+            echo "WARNING: the existing enrollment does not use the console CA; run again with --reinstall and a new token." >&2
+        fi
     fi
     unset CAV_ENROLL_TOKEN
 
@@ -302,19 +399,39 @@ install_agent() {
     "$BIN_DST" status --config "$CONF_FILE" --credential "$CRED_FILE" || true
 }
 
+usage() {
+    # The header comment, without the leading "# ".
+    awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"
+}
+
 main() {
-    case "${1:-}" in
-        --verify-only)
-            [ $# -eq 3 ] || die "usage: install.sh --verify-only FILE SIGFILE"
-            if minisign_verify "$2" "$3"; then echo "Signature OK"; exit 0; fi
-            echo "Signature verification FAILED" >&2
-            exit 1
-            ;;
-        --reinstall) install_agent 1 ;;
-        '') install_agent 0 ;;
-        -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
-        *) die "unknown argument $1" ;;
-    esac
+    if [ "${1:-}" = --verify-only ]; then
+        [ $# -eq 3 ] || die "usage: install.sh --verify-only FILE SIGFILE"
+        if minisign_verify "$2" "$3"; then echo "Signature OK"; exit 0; fi
+        echo "Signature verification FAILED" >&2
+        exit 1
+    fi
+    reinstall=0
+    token_stdin=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --reinstall) reinstall=1 ;;
+            --token-stdin) token_stdin=1 ;;
+            --server|--ca-sha256|--clamd)
+                [ $# -ge 2 ] || die "$1 needs a value"
+                case "$1" in
+                    --server) CAV_SERVER_URL=$2 ;;
+                    --ca-sha256) CAV_CA_SHA256=$2 ;;
+                    --clamd) CAV_CLAMD_ADDR=$2 ;;
+                esac
+                shift
+                ;;
+            -h|--help) usage; exit 0 ;;
+            *) die "unknown argument $1 (see --help)" ;;
+        esac
+        shift
+    done
+    install_agent "$reinstall" "$token_stdin"
 }
 
 main "$@"

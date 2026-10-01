@@ -61,14 +61,21 @@
   <h2>New enrollment token</h2>
   <p><strong>Copy it now. It will not be shown again.</strong></p>
   <pre class="code">{{.Token}}</pre>
-  <h2>Linux (as root)</h2>
-  <pre class="code">curl -fsSL {{.BaseURL}}/downloads/install.sh -o install.sh
-CAV_SERVER_URL={{.BaseURL}} CAV_ENROLL_TOKEN={{.Token}} sh install.sh</pre>
-  <h2>Windows (elevated PowerShell)</h2>
-  <pre class="code">Invoke-WebRequest {{.BaseURL}}/downloads/install.ps1 -OutFile install.ps1
-$env:CAV_ENROLL_TOKEN = '{{.Token}}'
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -ServerUrl {{.BaseURL}}</pre>
-  <p class="small muted">The install scripts verify the agent's release signature before installing it. See docs/install-agent.md.</p>
+  {{with .Commands}}
+  {{if .Problem}}<p class="flash error">{{.Problem}}</p>{{end}}
+  {{if .CAFingerprint}}<p class="small">This console uses a private CA. The commands trust only the CA with SHA-256 fingerprint <code>{{.CAFingerprint}}</code>, checked before anything is installed.</p>{{end}}
+  {{if .Linux}}
+  <h2>Linux</h2>
+  <p class="small muted">Paste into a terminal on the endpoint. Uses sudo; drop <code>sudo</code> if you are already root.</p>
+  <pre class="code">{{.Linux}}</pre>
+  {{end}}
+  {{if .Windows}}
+  <h2>Windows</h2>
+  <p class="small muted">Paste into PowerShell opened with "Run as administrator".</p>
+  <pre class="code">{{.Windows}}</pre>
+  {{end}}
+  {{end}}
+  <p class="small muted">The installers verify the agent's release signature before installing it. To deploy from an RMM tool instead, see docs/install-agent.md.</p>
 </div>
 {{end}}
 <table>

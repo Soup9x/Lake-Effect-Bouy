@@ -1,0 +1,10 @@
+# Keep secrets and bulky local files out of the server image's build context.
+.git
+deploy/.env
+*.env
+!.env.example
+deploy/downloads
+dist
+bin
+*.key
+*.pem

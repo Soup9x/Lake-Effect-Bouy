@@ -30,12 +30,15 @@ type Server struct {
 	Log          *slog.Logger
 	PublicURL    *url.URL
 	OfflineAfter time.Duration
+	// DownloadsDir holds the agent release files; the install commands
+	// depend on what is published there (console-ca.pem, install.ps1).
+	DownloadsDir string
 	tmpl         templates
 	loginRate    *httpx.RateLimiter
 }
 
-func New(db *pgxpool.Pool, am *auth.Manager, h *secret.Hasher, log *slog.Logger, publicURL *url.URL, offlineAfter time.Duration) *Server {
-	return &Server{DB: db, Auth: am, Hasher: h, Log: log, PublicURL: publicURL, OfflineAfter: offlineAfter,
+func New(db *pgxpool.Pool, am *auth.Manager, h *secret.Hasher, log *slog.Logger, publicURL *url.URL, offlineAfter time.Duration, downloadsDir string) *Server {
+	return &Server{DB: db, Auth: am, Hasher: h, Log: log, PublicURL: publicURL, OfflineAfter: offlineAfter, DownloadsDir: downloadsDir,
 		tmpl: loadTemplates(), loginRate: httpx.NewRateLimiter(20, 10)}
 }
 
@@ -451,8 +454,8 @@ func (s *Server) tenantArchive(w http.ResponseWriter, r *http.Request) {
 // ---- enrollment tokens ----
 
 type newToken struct {
-	Token   string
-	BaseURL string
+	Token    string
+	Commands installCommands
 }
 
 func (s *Server) tokensData(r *http.Request, t *store.Tenant) (tenantData, error) {
@@ -535,7 +538,15 @@ func (s *Server) tokenCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	base := strings.TrimRight(s.PublicURL.String(), "/")
-	d.NewToken = &newToken{Token: token, BaseURL: base}
+	ca, err := loadConsoleCA(s.DownloadsDir)
+	var cmds installCommands
+	if err != nil {
+		s.Log.Error("cannot use the published console CA", "err", err)
+		cmds.Problem = "The console CA published in the downloads directory is invalid (" + err.Error() + "), so no install commands can be generated. Fix it, then create a new token."
+	} else {
+		cmds = buildInstallCommands(base, token, ca)
+	}
+	d.NewToken = &newToken{Token: token, Commands: cmds}
 	s.render(w, r, http.StatusOK, "tenant", page{Title: t.Name, Flash: "Enrollment token created.", Data: d})
 }
 

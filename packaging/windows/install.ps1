@@ -13,11 +13,22 @@
     Idempotent: re-running upgrades the binary and keeps the enrollment.
     Use -Reinstall to enroll again (replacing this machine's agent).
 
+    For a console with a private CA (e.g. a test VM), pass -CaSha256 with the
+    SHA-256 fingerprint of the console's CA certificate. The CA is downloaded
+    and used only if its fingerprint matches; downloads are then checked
+    against that CA alone, and the agent trusts only that CA for the console.
+    Later upgrade runs reuse the installed CA; -Reinstall uses only what it
+    is given.
+
     -VerifyOnly checks a file against a signature and exits (no admin needed).
 
 .EXAMPLE
     $env:CAV_ENROLL_TOKEN = 'cav_enr_...'
     .\install.ps1 -ServerUrl https://console.example.com
+
+.EXAMPLE
+    $env:CAV_ENROLL_TOKEN = 'cav_enr_...'
+    .\install.ps1 -ServerUrl https://192.168.1.50 -CaSha256 3f1a...e9
 
 .EXAMPLE
     .\install.ps1 -VerifyOnly -VerifyFile .\clamav-agent_windows_amd64.exe -VerifySignatureFile .\clamav-agent_windows_amd64.exe.minisig
@@ -27,6 +38,7 @@ param(
     [string]$ServerUrl,
     [string]$EnrollToken,
     [string]$ClamdAddress,
+    [string]$CaSha256,
     [switch]$Reinstall,
     [switch]$VerifyOnly,
     [string]$VerifyFile,
@@ -54,6 +66,7 @@ $ExePath       = [IO.Path]::Combine($InstallDir, 'clamav-agent.exe')
 $DataDir       = [IO.Path]::Combine($ProgramDataDir, 'ClamAVAgent')
 $ConfigPath    = [IO.Path]::Combine($DataDir, 'agent.yaml')
 $CredPath      = [IO.Path]::Combine($DataDir, 'credential')
+$CaPath        = [IO.Path]::Combine($DataDir, 'console-ca.pem')
 $LogDir        = [IO.Path]::Combine($DataDir, 'logs')
 $SidAdmins     = '*S-1-5-32-544'
 $SidSystem     = '*S-1-5-18'
@@ -68,12 +81,64 @@ $SidSystem     = '*S-1-5-18'
 $CavMinisignSource = @'
 using System;
 using System.IO;
+using System.Net.Security;
 using System.Numerics;
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 
 namespace CavMinisign
 {
+    // Certificate checks for downloads from a console with a private CA.
+    public static class Tls
+    {
+        // Accepts any certificate. Only for fetching the console CA, whose
+        // fingerprint is checked before it is used.
+        public static RemoteCertificateValidationCallback AcceptAny()
+        {
+            return delegate { return true; };
+        }
+
+        // Accepts the server only if its certificate is valid for the host
+        // and chains to exactly this CA. The system trust store is not used.
+        // The CA is loaded by New-CavCertificate: the byte[] constructor is
+        // obsolete (an Add-Type error) on PowerShell 7.6, and its replacement
+        // does not exist on Windows PowerShell 5.1.
+        public static RemoteCertificateValidationCallback PinnedTo(X509Certificate2 ca)
+        {
+            return delegate (object sender, X509Certificate certificate, X509Chain presented, SslPolicyErrors errors)
+            {
+                return ChainsTo(ca, certificate, presented, errors);
+            };
+        }
+
+        public static bool ChainsTo(X509Certificate2 ca, X509Certificate certificate, X509Chain presented, SslPolicyErrors errors)
+        {
+            if (certificate == null) { return false; }
+            if ((errors & (SslPolicyErrors.RemoteCertificateNameMismatch | SslPolicyErrors.RemoteCertificateNotAvailable)) != 0) { return false; }
+            X509Chain chain = new X509Chain();
+            chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+            // The CA is not in the system store; it is supplied here and
+            // required to be the root below.
+            chain.ChainPolicy.VerificationFlags = X509VerificationFlags.AllowUnknownCertificateAuthority;
+            chain.ChainPolicy.ExtraStore.Add(ca);
+            if (presented != null)
+            {
+                foreach (X509ChainElement e in presented.ChainElements) { chain.ChainPolicy.ExtraStore.Add(e.Certificate); }
+            }
+            if (!chain.Build(new X509Certificate2(certificate))) { return false; }
+            if (chain.ChainElements.Count < 2) { return false; }
+            byte[] root = chain.ChainElements[chain.ChainElements.Count - 1].Certificate.RawData;
+            byte[] want = ca.RawData;
+            if (root.Length != want.Length) { return false; }
+            for (int i = 0; i < root.Length; i++)
+            {
+                if (root[i] != want[i]) { return false; }
+            }
+            return true;
+        }
+    }
+
     public sealed class VerificationException : Exception
     {
         public VerificationException(string message) : base(message) { }
@@ -441,6 +506,12 @@ function Initialize-CavMinisign {
     }
 }
 
+function New-CavCertificate([byte[]]$Der) {
+    $loader = 'System.Security.Cryptography.X509Certificates.X509CertificateLoader' -as [type]
+    if ($loader) { return $loader::LoadCertificate($Der) }
+    return New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 (, $Der)
+}
+
 function Assert-CavPublicKey {
     # The key is substituted at build time; refuse to run an unrendered script.
     if ($MinisignPublicKey -notmatch '^RW[A-Za-z0-9+/]{54}$') {
@@ -473,6 +544,42 @@ function Test-CavMinisignSignature {
 # ---------------------------------------------------------------------------
 
 function Write-Step([string]$Message) { Write-Host ('==> ' + $Message) }
+
+# Downloads Url to Path. With a callback from [CavMinisign.Tls], that callback
+# alone decides whether the server certificate is trusted.
+function Save-CavDownload {
+    param([string]$Url, [string]$Path, [Net.Security.RemoteCertificateValidationCallback]$Validate)
+    $req = [Net.HttpWebRequest][Net.WebRequest]::Create($Url)
+    $req.AllowAutoRedirect = $false
+    $req.Timeout = 120000
+    if ($Validate) { $req.ServerCertificateValidationCallback = $Validate }
+    $resp = $req.GetResponse()
+    try {
+        if ([int]$resp.StatusCode -ne 200) { throw ('HTTP ' + [int]$resp.StatusCode + ' for ' + $Url) }
+        $in = $resp.GetResponseStream()
+        $out = [IO.File]::Create($Path)
+        try { $in.CopyTo($out) } finally { $out.Dispose(); $in.Dispose() }
+    } finally {
+        $resp.Close()
+    }
+}
+
+# Returns the DER bytes of the single certificate in a PEM file.
+function ConvertFrom-CavPem([string]$Path) {
+    $text = [IO.File]::ReadAllText($Path)
+    $m = [regex]::Matches($text, '-----BEGIN CERTIFICATE-----([A-Za-z0-9+/=\s]+)-----END CERTIFICATE-----')
+    if ($m.Count -ne 1) { throw ($Path + ' must hold exactly one PEM certificate') }
+    return , [Convert]::FromBase64String(($m[0].Groups[1].Value -replace '\s', ''))
+}
+
+function ConvertTo-CavPem([byte[]]$Der) {
+    return "-----BEGIN CERTIFICATE-----`n" + [Convert]::ToBase64String($Der, 'InsertLineBreaks') + "`n-----END CERTIFICATE-----`n"
+}
+
+function Get-CavSha256Hex([byte[]]$Bytes) {
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { return (($sha.ComputeHash($Bytes) | ForEach-Object { $_.ToString('x2') }) -join '') } finally { $sha.Dispose() }
+}
 
 function Assert-Administrator {
     $id = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -539,17 +646,50 @@ function Install-CavAgent {
     if (-not $clamd) { $clamd = Get-ClamdAddressFromConfig }
     if (-not $clamd) { $clamd = 'tcp://127.0.0.1:3310' }
 
+    $caSha = $CaSha256
+    if (-not $caSha) { $caSha = $env:CAV_CA_SHA256 }
+    if ($caSha) {
+        $caSha = ($caSha -replace ':', '').ToLowerInvariant()
+        if ($caSha -notmatch '^[0-9a-f]{64}$') { throw '-CaSha256 must be a SHA-256 fingerprint (64 hex characters).' }
+    }
+
     # PowerShell 5.1 may default to TLS 1.0.
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ('cav-install-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $tmp | Out-Null
+    $caDer = $null
+    $newCa = $false
     try {
+        if ($caSha) {
+            Write-Step 'Downloading the console CA and checking its fingerprint'
+            Initialize-CavMinisign
+            $caTmp = Join-Path $tmp 'console-ca.pem'
+            Save-CavDownload ($base + '/downloads/console-ca.pem') $caTmp ([CavMinisign.Tls]::AcceptAny())
+            $caDer = ConvertFrom-CavPem $caTmp
+            $got = Get-CavSha256Hex $caDer
+            if ($got -ne $caSha) { throw ('Console CA fingerprint mismatch (got ' + $got + ', expected ' + $caSha + '). NOT installing.') }
+            $newCa = $true
+        } elseif (-not $Reinstall -and (Test-Path -LiteralPath $CaPath)) {
+            # An upgrade keeps the trust set up at enrollment. A re-enrollment
+            # follows the parameters it was given (a console may have moved to
+            # a public certificate).
+            Write-Step ('Using the console CA installed at ' + $CaPath)
+            Initialize-CavMinisign
+            $caDer = ConvertFrom-CavPem $CaPath
+        }
+
         Write-Step ('Downloading ' + $BinaryName + ' from ' + $base + '/downloads/')
         $bin = Join-Path $tmp $BinaryName
         $sig = $bin + '.minisig'
-        Invoke-WebRequest -UseBasicParsing -Uri ($base + '/downloads/' + $BinaryName) -OutFile $bin
-        Invoke-WebRequest -UseBasicParsing -Uri ($base + '/downloads/' + $BinaryName + '.minisig') -OutFile $sig
+        if ($caDer) {
+            $pinned = [CavMinisign.Tls]::PinnedTo((New-CavCertificate $caDer))
+            Save-CavDownload ($base + '/downloads/' + $BinaryName) $bin $pinned
+            Save-CavDownload ($base + '/downloads/' + $BinaryName + '.minisig') $sig $pinned
+        } else {
+            Invoke-WebRequest -UseBasicParsing -Uri ($base + '/downloads/' + $BinaryName) -OutFile $bin
+            Invoke-WebRequest -UseBasicParsing -Uri ($base + '/downloads/' + $BinaryName + '.minisig') -OutFile $sig
+        }
 
         Write-Step 'Verifying minisign signature'
         $tc = Test-CavMinisignSignature -File $bin -SignatureFile $sig
@@ -596,10 +736,18 @@ function Install-CavAgent {
     Set-CavAcl $DataDir @(($SidAdmins + ':(OI)(CI)F'), ($SidSystem + ':F'), ($ServiceAcct + ':(OI)(CI)M'))
     Set-CavAcl $LogDir @(($SidAdmins + ':(OI)(CI)F'), ($SidSystem + ':(OI)(CI)F'), ($ServiceAcct + ':(OI)(CI)M'))
 
+    if ($newCa) {
+        # Written from the verified DER, so the file holds only that certificate.
+        [IO.File]::WriteAllText($CaPath, (ConvertTo-CavPem $caDer), [Text.Encoding]::ASCII)
+        Set-CavAcl $CaPath @(($SidAdmins + ':F'), ($SidSystem + ':F'), ($ServiceAcct + ':R'))
+        Write-Step ('Installed the console CA at ' + $CaPath)
+    }
+
     if ($needEnroll) {
         Write-Step ('Enrolling with ' + $base + ' (clamd ' + $clamd + ')')
         $enrollArgs = @('enroll', '--server', $base, '--clamd', $clamd, '--config', $ConfigPath)
         if ($Reinstall -or $enrolled) { $enrollArgs += '--replace' }
+        if ($caDer) { $enrollArgs += @('--ca-cert-file', $CaPath) }
         # Token via environment, never on the command line.
         $env:CAV_ENROLL_TOKEN = $token
         try {
@@ -608,8 +756,15 @@ function Install-CavAgent {
         } finally {
             Remove-Item Env:\CAV_ENROLL_TOKEN -ErrorAction SilentlyContinue
         }
+        if (-not $caDer -and (Test-Path -LiteralPath $CaPath)) {
+            Remove-Item -LiteralPath $CaPath -Force
+            Write-Step 'Removed the console CA from an earlier enrollment (no longer used)'
+        }
     } else {
         Write-Step 'Already enrolled; keeping existing credential (use -Reinstall to re-enroll)'
+        if ($caDer -and -not (Select-String -LiteralPath $ConfigPath -Pattern '^ca_cert_file:' -Quiet)) {
+            Write-Warning 'The existing enrollment does not use the console CA. Run again with -Reinstall and a new token.'
+        }
     }
 
     # Credential: service + Administrators only. Config: read-only for the service.

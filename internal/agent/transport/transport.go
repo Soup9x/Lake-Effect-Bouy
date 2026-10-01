@@ -17,13 +17,14 @@ type Options struct {
 	// SPKIPin, when non-nil, is a SHA-256 of a SubjectPublicKeyInfo that must
 	// appear in the verified chain. Normal verification still applies.
 	SPKIPin []byte
-	// RootCAs overrides the system trust store (tests only).
+	// RootCAs, when non-nil, replaces the system trust store (the agent's
+	// ca_cert_file, for a console with a private CA).
 	RootCAs *x509.CertPool
 	Timeout time.Duration
 }
 
 // NewClient returns an HTTP client for talking to the console. It uses the
-// system trust store, TLS 1.2+, honours HTTPS_PROXY, and never follows
+// system trust store (or only RootCAs, when set), TLS 1.2+, honours HTTPS_PROXY, and never follows
 // redirects (a redirect could send the bearer credential elsewhere).
 func NewClient(o Options) *http.Client {
 	if o.Timeout == 0 {

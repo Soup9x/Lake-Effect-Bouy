@@ -2,7 +2,25 @@
 
 ## Deploy
 
-Requirements: a Linux host with Docker Compose, a public DNS name for the console, ports 80 and 443 reachable from the internet (agents and Let's Encrypt), and the admin network (VPN or Tailscale) able to reach the host.
+Requirements: a Linux host with Docker Compose and the admin network (VPN, Tailscale or your LAN) able to reach it.
+
+- **Production:** a public DNS name for the console, and ports 80 and 443 reachable from the internet (agents and Let's Encrypt).
+- **Test VM:** the VM's IP address (or a local name such as `buoy.internal`) is enough. Caddy then issues the certificate from its internal CA, and the agent install commands pin that CA (see [docs/install-agent.md](install-agent.md#console-with-a-private-ca)).
+
+### With the setup script
+
+On an Ubuntu server (`sudo apt install docker.io docker-compose-v2 git openssl curl`, and add yourself to the `docker` group):
+
+```sh
+git clone https://github.com/Soup9x/Lake-Effect-Buoy.git
+Lake-Effect-Buoy/deploy/setup.sh
+```
+
+It asks for the console hostname or IP and the admin networks (defaults: this host's IP and local network), writes `deploy/.env` with fresh random secrets (mode 0600), builds and starts the stack, publishes Caddy's internal CA when it is used, and creates the first admin (you choose the password). For unattended use: `setup.sh --hostname 192.168.1.50 --admin-cidr 192.168.1.0/24 --yes`, then create the admin as below. Run it again at any time to upgrade; it keeps `.env`, the data and the admins.
+
+Then publish an agent release (below), sign in, create a tenant and an enrollment token, and paste the install command the console shows on each endpoint.
+
+### By hand
 
 ```sh
 cd deploy
@@ -11,6 +29,13 @@ openssl rand -base64 32        # -> TOKEN_HASH_KEY
 openssl rand -hex 24           # -> POSTGRES_PASSWORD, and again for CAV_APP_DB_PASSWORD
 mkdir -p downloads             # signed agent release files go here (see "Publish an agent release")
 docker compose up -d --build
+```
+
+If Caddy uses its internal CA (an IP address or local name in `CAV_HOSTNAME`), publish it for the install commands:
+
+```sh
+docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./root.crt
+openssl x509 -in root.crt -out downloads/console-ca.pem && chmod 644 downloads/console-ca.pem
 ```
 
 Services:

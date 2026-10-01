@@ -7,7 +7,9 @@ package config
 import (
 	"bytes"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -24,6 +26,9 @@ import (
 // maxConfigBytes caps the config file size.
 const maxConfigBytes = 64 << 10
 
+// maxCACertBytes caps the ca_cert_file size.
+const maxCACertBytes = 64 << 10
+
 // Config is the on-disk agent configuration.
 type Config struct {
 	ServerURL string      `yaml:"server_url"`
@@ -32,7 +37,13 @@ type Config struct {
 	// SubjectPublicKeyInfo. When set, the server's verified chain must
 	// contain a certificate with this key, in addition to normal checks.
 	CACertPin string `yaml:"ca_cert_pin,omitempty"`
-	LogLevel  string `yaml:"log_level,omitempty"`
+	// CACertFile is an optional absolute path to a PEM file holding the
+	// certificate(s) of the CA that issued the console's certificate, for a
+	// console with a private CA. When set, ONLY these CAs are trusted for the
+	// console; the system trust store is not used. The installer writes it
+	// after checking the CA's fingerprint.
+	CACertFile string `yaml:"ca_cert_file,omitempty"`
+	LogLevel   string `yaml:"log_level,omitempty"`
 	// InsecureHTTPForTesting allows an http:// server URL. Never use it in
 	// production; the agent logs a loud warning whenever it is set.
 	InsecureHTTPForTesting bool `yaml:"insecure_http_for_testing,omitempty"`
@@ -95,6 +106,9 @@ func (c *Config) Validate() error {
 			return err
 		}
 	}
+	if c.CACertFile != "" && (!filepath.IsAbs(c.CACertFile) || strings.ContainsRune(c.CACertFile, 0)) {
+		return errors.New("config: ca_cert_file must be an absolute path")
+	}
 	switch c.LogLevel {
 	case "":
 		c.LogLevel = "info"
@@ -145,6 +159,56 @@ func (c *Config) Pin() ([]byte, error) {
 		return nil, errors.New("config: ca_cert_pin must be the base64 SHA-256 of a SubjectPublicKeyInfo (44 characters)")
 	}
 	return b, nil
+}
+
+// RootCAs returns the CAs from ca_cert_file, or nil (use the system trust
+// store) when it is not set. The file must hold only PEM certificates.
+func (c *Config) RootCAs() (*x509.CertPool, error) {
+	if c.CACertFile == "" {
+		return nil, nil
+	}
+	return LoadCACertFile(c.CACertFile)
+}
+
+// LoadCACertFile reads a PEM file of one or more CERTIFICATE blocks.
+func LoadCACertFile(path string) (*x509.CertPool, error) {
+	f, err := os.Open(path) //nolint:gosec // local path from the agent's own config
+	if err != nil {
+		return nil, fmt.Errorf("config: ca_cert_file: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, maxCACertBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("config: ca_cert_file: %w", err)
+	}
+	if len(data) > maxCACertBytes {
+		return nil, fmt.Errorf("config: ca_cert_file %s is too large", path)
+	}
+	pool := x509.NewCertPool()
+	n := 0
+	for rest := data; ; {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			if len(bytes.TrimSpace(rest)) != 0 {
+				return nil, fmt.Errorf("config: ca_cert_file %s contains data that is not PEM", path)
+			}
+			break
+		}
+		if block.Type != "CERTIFICATE" {
+			return nil, fmt.Errorf("config: ca_cert_file %s contains a %q block; only certificates are allowed", path, block.Type)
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("config: ca_cert_file %s: %w", path, err)
+		}
+		pool.AddCert(cert)
+		n++
+	}
+	if n == 0 {
+		return nil, fmt.Errorf("config: ca_cert_file %s contains no certificates", path)
+	}
+	return pool, nil
 }
 
 // Marshal renders the config as YAML with a short header.
