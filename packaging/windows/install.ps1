@@ -101,9 +101,11 @@ namespace CavMinisign
 
         // Accepts the server only if its certificate is valid for the host
         // and chains to exactly this CA. The system trust store is not used.
-        public static RemoteCertificateValidationCallback PinnedTo(byte[] caDer)
+        // The CA is loaded by New-CavCertificate: the byte[] constructor is
+        // obsolete (an Add-Type error) on PowerShell 7.6, and its replacement
+        // does not exist on Windows PowerShell 5.1.
+        public static RemoteCertificateValidationCallback PinnedTo(X509Certificate2 ca)
         {
-            X509Certificate2 ca = new X509Certificate2(caDer);
             return delegate (object sender, X509Certificate certificate, X509Chain presented, SslPolicyErrors errors)
             {
                 return ChainsTo(ca, certificate, presented, errors);
@@ -504,6 +506,12 @@ function Initialize-CavMinisign {
     }
 }
 
+function New-CavCertificate([byte[]]$Der) {
+    $loader = 'System.Security.Cryptography.X509Certificates.X509CertificateLoader' -as [type]
+    if ($loader) { return $loader::LoadCertificate($Der) }
+    return New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 (, $Der)
+}
+
 function Assert-CavPublicKey {
     # The key is substituted at build time; refuse to run an unrendered script.
     if ($MinisignPublicKey -notmatch '^RW[A-Za-z0-9+/]{54}$') {
@@ -675,7 +683,7 @@ function Install-CavAgent {
         $bin = Join-Path $tmp $BinaryName
         $sig = $bin + '.minisig'
         if ($caDer) {
-            $pinned = [CavMinisign.Tls]::PinnedTo($caDer)
+            $pinned = [CavMinisign.Tls]::PinnedTo((New-CavCertificate $caDer))
             Save-CavDownload ($base + '/downloads/' + $BinaryName) $bin $pinned
             Save-CavDownload ($base + '/downloads/' + $BinaryName + '.minisig') $sig $pinned
         } else {
