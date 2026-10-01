@@ -233,7 +233,7 @@ func TestRotation(t *testing.T) {
 		ok(60)(w, r)
 	}
 	h = newHarness(t, rot, checkPersisted)
-	h.rotate = jsonReply(200, protocol.RotateResponse{Credential: "cav_agt_rotated.secret2"})
+	h.rotate = jsonReply(200, protocol.RotateResponse{Credential: "cav_agt_rotated.secret2"}) // gitleaks:allow fake test credential
 	if err := h.run(2); err != nil {
 		t.Fatal(err)
 	}
