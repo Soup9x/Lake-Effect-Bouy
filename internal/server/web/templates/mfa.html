@@ -1,0 +1,7 @@
+{{define "content"}}
+<div class="login card">
+  <h1>Second factor required</h1>
+  <p>Your account has a second factor configured, but this version of the console cannot verify it yet. Ask another administrator for help.</p>
+  <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{.Session.CSRFToken}}"><button type="submit" class="secondary">Log out</button></form>
+</div>
+{{end}}

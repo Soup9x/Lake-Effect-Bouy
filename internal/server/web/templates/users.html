@@ -1,0 +1,27 @@
+{{define "content"}}
+<h1>Users</h1>
+<table>
+  <thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Created</th><th>State</th><th></th></tr></thead>
+  <tbody>
+  {{$me := .Session.UserID}}
+  {{range .Data.Users}}
+    <tr>
+      <td>{{.Email}}</td><td>{{.DisplayName}}</td><td>{{.Role}}</td><td>{{fmtTime .CreatedAt}}</td>
+      <td>{{if .DisabledAt}}disabled{{else}}<span class="ok">active</span>{{end}}</td>
+      <td>{{if and (not .DisabledAt) (ne (print .ID) (print $me))}}<button class="danger" hx-post="/users/{{.ID}}/disable" hx-confirm="Disable {{.Email}}? Their sessions end immediately.">Disable</button>{{end}}</td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+<h2>Add user</h2>
+<div class="card">
+<form class="stack" method="post" action="/users">
+  {{template "csrf" .}}
+  <label for="email">Email</label><input id="email" type="email" name="email" required value="{{.Data.Form.Email}}">
+  <label for="display_name">Name</label><input id="display_name" type="text" name="display_name" maxlength="200" value="{{.Data.Form.DisplayName}}">
+  <label for="password">Initial password <span class="muted small">(at least 12 characters; share it securely and ask them to change it)</span></label>
+  <input id="password" type="password" name="password" required minlength="12" autocomplete="new-password">
+  <p><button type="submit">Create user</button></p>
+</form>
+</div>
+{{end}}

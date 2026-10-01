@@ -1,0 +1,125 @@
+{{define "content"}}
+{{$t := .Data.Tenant}}
+<h1>{{$t.Name}}{{if $t.ArchivedAt}} <span class="badge">archived</span>{{end}}</h1>
+<nav class="tabs">
+  <a href="/tenants/{{$t.ID}}" class="{{if eq .Data.Tab "endpoints"}}active{{end}}">Endpoints</a>
+  <a href="/tenants/{{$t.ID}}/tokens" class="{{if eq .Data.Tab "tokens"}}active{{end}}">Enrollment tokens</a>
+  <a href="/tenants/{{$t.ID}}/settings" class="{{if eq .Data.Tab "settings"}}active{{end}}">Settings</a>
+</nav>
+{{if eq .Data.Tab "endpoints"}}
+<form class="inline" method="get" action="/tenants/{{$t.ID}}">
+  <label>Hostname<input type="text" name="q" value="{{.Data.Filter.Query}}"></label>
+  <label>Status
+    <select name="status">
+      <option value="" {{if eq .Data.Filter.Status ""}}selected{{end}}>All</option>
+      <option value="online" {{if eq .Data.Filter.Status "online"}}selected{{end}}>Online</option>
+      <option value="offline" {{if eq .Data.Filter.Status "offline"}}selected{{end}}>Offline</option>
+    </select>
+  </label>
+  <label><span><input type="checkbox" name="revoked" value="1" {{if .Data.Filter.Revoked}}checked{{end}}> include revoked</span></label>
+  <button type="submit" class="secondary">Filter</button>
+</form>
+<p></p>
+{{template "agents_table" .Data}}
+{{else if eq .Data.Tab "tokens"}}
+{{template "tokens_tab" .}}
+{{else}}
+{{template "settings_tab" .}}
+{{end}}
+{{end}}
+
+{{define "agents_table"}}
+<div id="agents" hx-get="{{.RefreshURL}}" hx-trigger="every 30s" hx-swap="outerHTML" hx-headers='{"X-Background-Refresh":"1"}'>
+<table>
+  <thead><tr><th>Hostname</th><th>Status</th><th>Last heartbeat</th><th>OS</th><th>Agent</th><th>ClamAV</th><th>Signatures</th><th>clamd</th></tr></thead>
+  <tbody>
+  {{$now := .Now}}{{$off := .OfflineAfter}}
+  {{range .Agents}}
+    <tr>
+      <td><a href="/agents/{{.ID}}">{{.Hostname}}</a></td>
+      <td>{{if .RevokedAt}}<span class="badge">revoked</span>{{else if .Online $now $off}}<span class="dot on"></span>online{{else}}<span class="dot off"></span>offline{{end}}</td>
+      <td>{{if .LastHeartbeatAt}}<span title="{{fmtTime .LastHeartbeatAt}}">{{ago .LastHeartbeatAt}}</span>{{else}}<span class="muted">never</span>{{end}}</td>
+      <td>{{.OSName}}</td>
+      <td>{{.AgentVersion}}</td>
+      <td>{{deref .EngineVersion}}</td>
+      <td>{{if .SignatureVersion}}{{derefInt .SignatureVersion}} <span class="{{sigClass .SignatureDate}} small">({{ago .SignatureDate}})</span>{{else}}<span class="muted">n/a</span>{{end}}</td>
+      <td><span class="{{clamdClass .ClamdStatus}}">{{.ClamdStatus}}</span></td>
+    </tr>
+  {{else}}
+    <tr><td colspan="8" class="muted">No endpoints match. Create an enrollment token to add one.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+<p class="small muted">Updated {{fmtTime .Now}}. Offline after {{.OfflineAfter}} without a heartbeat.</p>
+</div>
+{{end}}
+
+{{define "tokens_tab"}}
+{{$t := .Data.Tenant}}
+{{with .Data.NewToken}}
+<div class="card">
+  <h2>New enrollment token</h2>
+  <p><strong>Copy it now. It will not be shown again.</strong></p>
+  <pre class="code">{{.Token}}</pre>
+  <h2>Linux (as root)</h2>
+  <pre class="code">curl -fsSL {{.BaseURL}}/downloads/install.sh -o install.sh
+CAV_SERVER_URL={{.BaseURL}} CAV_ENROLL_TOKEN={{.Token}} sh install.sh</pre>
+  <h2>Windows (elevated PowerShell)</h2>
+  <pre class="code">Invoke-WebRequest {{.BaseURL}}/downloads/install.ps1 -OutFile install.ps1
+$env:CAV_ENROLL_TOKEN = '{{.Token}}'
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -ServerUrl {{.BaseURL}}</pre>
+  <p class="small muted">The install scripts verify the agent's release signature before installing it. See docs/install-agent.md.</p>
+</div>
+{{end}}
+<table>
+  <thead><tr><th>Label</th><th>Prefix</th><th>Uses</th><th>Expires</th><th>Created</th><th>State</th><th></th></tr></thead>
+  <tbody>
+  {{$now := .Data.Now}}
+  {{range .Data.Tokens}}
+    <tr>
+      <td>{{.Label}}</td>
+      <td><code>{{.TokenPrefix}}…</code></td>
+      <td>{{.UseCount}}{{if .MaxUses}} / {{derefInt .MaxUses}}{{end}}</td>
+      <td>{{fmtTime .ExpiresAt}}</td>
+      <td>{{fmtTime .CreatedAt}} <span class="muted small">by {{.CreatorEmail}}</span></td>
+      <td>{{if .RevokedAt}}revoked{{else if .Usable $now}}<span class="ok">active</span>{{else}}<span class="muted">expired / used up</span>{{end}}</td>
+      <td>{{if and (not .RevokedAt) (.Usable $now)}}<button class="danger" hx-post="/enrollment-tokens/{{.ID}}/revoke" hx-confirm="Revoke token {{.Label}}? Agents already enrolled are not affected.">Revoke</button>{{end}}</td>
+    </tr>
+  {{else}}
+    <tr><td colspan="7" class="muted">No enrollment tokens.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+{{if not $t.ArchivedAt}}
+<h2>Create enrollment token</h2>
+<div class="card">
+<form class="inline" method="post" action="/tenants/{{$t.ID}}/tokens">
+  {{template "csrf" .}}
+  <label>Label<input type="text" name="label" required maxlength="200" placeholder="Main office rollout"></label>
+  <label>Valid for (days)<input type="number" name="expires_days" value="7" min="1" max="90" required></label>
+  <label>Max uses (blank = unlimited)<input type="number" name="max_uses" min="1" max="100000"></label>
+  <button type="submit">Create token</button>
+</form>
+</div>
+{{end}}
+{{end}}
+
+{{define "settings_tab"}}
+{{$t := .Data.Tenant}}
+{{if $t.ArchivedAt}}
+<p class="muted">This tenant was archived {{fmtTime $t.ArchivedAt}}. Its agents are rejected as revoked.</p>
+{{else}}
+<div class="card">
+<form class="stack" method="post" action="/tenants/{{$t.ID}}">
+  {{template "csrf" .}}
+  {{template "tenant_fields" .Data.Form}}
+  <p><button type="submit">Save</button></p>
+</form>
+</div>
+<div class="card">
+  <h2>Archive tenant</h2>
+  <p class="muted">Archiving revokes the tenant's enrollment tokens and makes all of its agents stop.</p>
+  <button class="danger" hx-post="/tenants/{{$t.ID}}/archive" hx-confirm="Archive {{$t.Name}}? All of its agents will be revoked.">Archive tenant</button>
+</div>
+{{end}}
+{{end}}

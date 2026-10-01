@@ -1,0 +1,22 @@
+title = "clamav-console"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "cav-enrollment-token"
+description = "ClamAV console enrollment token"
+regex = '''cav_enr_[a-z0-9]{40,}'''
+tags = ["token"]
+
+[[rules]]
+id = "cav-agent-credential"
+description = "ClamAV console agent credential"
+regex = '''cav_agt_[0-9a-f-]{36}\.[a-z0-9]{40,}'''
+tags = ["credential"]
+
+[[rules]]
+id = "minisign-secret-key"
+description = "minisign secret key"
+regex = '''untrusted comment: minisign encrypted secret key'''
+tags = ["key"]

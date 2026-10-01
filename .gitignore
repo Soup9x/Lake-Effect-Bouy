@@ -1,0 +1,12 @@
+.env
+*.env
+!.env.example
+/dist/
+/deploy/downloads/
+/bin/
+*.key
+*.minisign.key
+*.pem
+*.p12
+*.pfx
+coverage.out

@@ -1,0 +1,39 @@
+{{define "content"}}
+<h1>Tenants</h1>
+<table>
+  <thead><tr><th>Name</th><th>External</th><th>Endpoints online</th><th>Oldest signatures</th></tr></thead>
+  <tbody>
+  {{range .Data.Tenants}}
+    <tr>
+      <td><a href="/tenants/{{.ID}}">{{.Name}}</a>{{if .ArchivedAt}} <span class="badge">archived</span>{{end}}</td>
+      <td>{{if .Source}}<span class="badge">{{deref .Source}}</span> {{deref .ExternalID}}{{else}}<span class="muted">local</span>{{end}}</td>
+      <td>{{.AgentsOnline}} / {{.AgentsTotal}}</td>
+      <td>{{if .OldestSignature}}<span class="{{sigClass .OldestSignature}}">{{ago .OldestSignature}}</span>{{else}}<span class="muted">n/a</span>{{end}}</td>
+    </tr>
+  {{else}}
+    <tr><td colspan="4" class="muted">No tenants yet.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+<p class="small">{{if .Data.ShowArchived}}<a href="/tenants">Hide archived</a>{{else}}<a href="/tenants?archived=1">Show archived</a>{{end}}</p>
+
+<h2>Add tenant</h2>
+<div class="card">
+<form class="stack" method="post" action="/tenants">
+  {{template "csrf" .}}
+  {{template "tenant_fields" .Data.Form}}
+  <p><button type="submit">Create tenant</button></p>
+</form>
+</div>
+{{end}}
+
+{{define "tenant_fields"}}
+  <label for="name">Name</label>
+  <input id="name" type="text" name="name" value="{{.Name}}" required maxlength="200">
+  <label for="source">External source <span class="muted small">(optional, e.g. halopsa)</span></label>
+  <input id="source" type="text" name="source" value="{{.Source}}" maxlength="50" pattern="[a-z0-9_\-]{1,50}">
+  <label for="external_id">External ID <span class="muted small">(required if source is set)</span></label>
+  <input id="external_id" type="text" name="external_id" value="{{.ExternalID}}" maxlength="200">
+  <label for="notes">Notes</label>
+  <textarea id="notes" name="notes" rows="3" maxlength="4000">{{.Notes}}</textarea>
+{{end}}

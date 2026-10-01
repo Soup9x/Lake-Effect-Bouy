@@ -1,0 +1,2 @@
+# Known false positives (fake credentials in tests). Fingerprint: commit:file:rule:line
+6fa7de9a240ab7ee3a1943b1c8213f47e944bd15:internal/agent/heartbeat/heartbeat_test.go:generic-api-key:236

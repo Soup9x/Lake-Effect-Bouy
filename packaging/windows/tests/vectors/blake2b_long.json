@@ -1,0 +1,33 @@
+[
+ {
+  "source": "RFC 7693 Appendix A",
+  "input": {
+   "ascii": "abc"
+  },
+  "out": "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923"
+ },
+ {
+  "source": "coreutils b2sum -l 512 (cross-checked with Python hashlib)",
+  "input": {
+   "repeat_byte": 0,
+   "length": 1048576
+  },
+  "out": "a834b19291e54808ba8367ca60e6abd9c744138541284b12bb6caa532fae419b063c26022121148fef68a7d8dc0fa83eb2f00454138c1c54753f7148f6911e0d"
+ },
+ {
+  "source": "coreutils b2sum -l 512 (cross-checked with Python hashlib)",
+  "input": {
+   "repeat_byte": 97,
+   "length": 1000003
+  },
+  "out": "61c31edfd5786d52aeee64a113edbf3fe1094bf02158eef18d40bbf6aeccd886dd7534e74d80aee1c34c39fef394f47b0cb361892e538cbb05874ab5dd824749"
+ },
+ {
+  "source": "coreutils b2sum -l 512 (cross-checked with Python hashlib)",
+  "input": {
+   "repeat_byte": 255,
+   "length": 5242887
+  },
+  "out": "901827f9238a9f3ea6e885daabc1a3ce99445c4b3737d7dc378075a24a5d59198154f662864d52581304063698d39a66c0e99b257d162cbb144b74cbaf641e57"
+ }
+]
