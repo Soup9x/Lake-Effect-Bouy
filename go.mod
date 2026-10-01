@@ -2,6 +2,8 @@ module github.com/Soup9x/Lake-Effect-Bouy
 
 go 1.26.0
 
+toolchain go1.26.8
+
 require (
 	aead.dev/minisign v0.3.0
 	github.com/google/uuid v1.6.0
