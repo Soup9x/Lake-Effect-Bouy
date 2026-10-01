@@ -1,4 +1,4 @@
-# clamav-console
+# Lake-Effect-Buoy
 
 A multi-tenant management console for ClamAV, built for an MSP managing ClamAV across client endpoints.
 
