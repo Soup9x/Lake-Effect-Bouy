@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/agent/credstore"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/protocol"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/agent/credstore"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/protocol"
 )
 
 // step is one canned server reply to a heartbeat.

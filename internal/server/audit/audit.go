@@ -10,7 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/server/store"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/server/store"
 )
 
 // Action is a closed set of audited actions.

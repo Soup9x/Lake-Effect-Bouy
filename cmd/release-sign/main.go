@@ -29,7 +29,7 @@ import (
 	"aead.dev/minisign"
 	"golang.org/x/term"
 
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/release"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/release"
 )
 
 func main() {

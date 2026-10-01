@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/protocol"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/protocol"
 )
 
 // fakeClamd serves canned replies on l. Tests may listen; the agent never does.

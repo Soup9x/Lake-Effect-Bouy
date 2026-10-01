@@ -3,7 +3,7 @@ package server
 import (
 	"io/fs"
 
-	"github.com/Soup9x/Lake-Effect-Bouy/db"
+	"github.com/Soup9x/Lake-Effect-Buoy/db"
 )
 
 func mustSub() fs.FS {

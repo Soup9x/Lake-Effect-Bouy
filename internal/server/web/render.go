@@ -9,9 +9,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/protocol"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/server/auth"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/server/store"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/protocol"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/server/auth"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/server/store"
 )
 
 //go:embed templates/*.html

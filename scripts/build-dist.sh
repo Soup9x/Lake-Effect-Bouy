@@ -17,7 +17,7 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 OUT=dist/downloads
-PKG=github.com/Soup9x/Lake-Effect-Bouy
+PKG=github.com/Soup9x/Lake-Effect-Buoy
 
 die() { echo "build-dist: ERROR: $*" >&2; exit 1; }
 

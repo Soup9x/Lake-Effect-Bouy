@@ -15,7 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/protocol"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/protocol"
 )
 
 const maxCredentialLen = 512

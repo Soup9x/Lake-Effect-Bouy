@@ -1,7 +1,7 @@
 # systemd unit for the ClamAV console agent. Installed by install.sh.
 [Unit]
 Description=ClamAV console agent (reports clamd status to the MSP console)
-Documentation=https://github.com/Soup9x/Lake-Effect-Bouy/blob/main/docs/install-agent.md
+Documentation=https://github.com/Soup9x/Lake-Effect-Buoy/blob/main/docs/install-agent.md
 Wants=network-online.target
 After=network-online.target clamav-daemon.service clamd@scan.service
 

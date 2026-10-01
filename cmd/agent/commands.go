@@ -17,17 +17,17 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/agent/actions"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/agent/clamd"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/agent/config"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/agent/credstore"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/agent/enroll"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/agent/heartbeat"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/agent/logging"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/agent/sysinfo"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/agent/transport"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/protocol"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/release"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/agent/actions"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/agent/clamd"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/agent/config"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/agent/credstore"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/agent/enroll"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/agent/heartbeat"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/agent/logging"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/agent/sysinfo"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/agent/transport"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/protocol"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/release"
 )
 
 // pathFlags registers the shared --config and --credential flags.

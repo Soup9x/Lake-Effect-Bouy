@@ -23,11 +23,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/term"
 
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/server"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/server/audit"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/server/auth"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/server/config"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/server/store"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/server"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/server/audit"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/server/auth"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/server/config"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/server/store"
 )
 
 var version = "dev"

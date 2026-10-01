@@ -13,7 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/protocol"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/protocol"
 )
 
 // DefaultTimeout bounds every clamd exchange (dial + command + reply).

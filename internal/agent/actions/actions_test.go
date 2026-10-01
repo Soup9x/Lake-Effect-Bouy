@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/protocol"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/protocol"
 )
 
 func TestHandlersSubsetOfProtocolAllowlist(t *testing.T) {

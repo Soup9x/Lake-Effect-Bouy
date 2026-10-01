@@ -61,6 +61,9 @@ $SidSystem     = '*S-1-5-18'
 # ---------------------------------------------------------------------------
 # minisign verification. Windows has no built-in Ed25519 or BLAKE2b, so both
 # are implemented here (C# 5 syntax so .NET Framework's csc can compile it).
+# INTERIM: to be replaced by Authenticode verification (Get-AuthenticodeSignature)
+# once a code-signing certificate exists. Tested against Wycheproof Ed25519 and
+# BLAKE2b reference vectors by tests/Test-Verifier.ps1 (CI, PowerShell 5.1 + 7).
 # ---------------------------------------------------------------------------
 $CavMinisignSource = @'
 using System;

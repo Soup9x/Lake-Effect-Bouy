@@ -27,14 +27,14 @@ linters:
             - "**/internal/agent/**"
             - "**/cmd/agent/**"
           deny:
-            - pkg: github.com/Soup9x/Lake-Effect-Bouy/internal/server
+            - pkg: github.com/Soup9x/Lake-Effect-Buoy/internal/server
               desc: "agent must not import server code"
         server-no-agent:
           files:
             - "**/internal/server/**"
             - "**/cmd/server/**"
           deny:
-            - pkg: github.com/Soup9x/Lake-Effect-Bouy/internal/agent
+            - pkg: github.com/Soup9x/Lake-Effect-Buoy/internal/agent
               desc: "server must not import agent code"
   exclusions:
     rules:

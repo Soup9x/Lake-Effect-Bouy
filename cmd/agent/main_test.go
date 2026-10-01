@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/protocol"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/protocol"
 )
 
 // TestEnrollThenRunUntilRevoked drives the real subcommands against an

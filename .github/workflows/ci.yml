@@ -61,3 +61,27 @@ jobs:
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # The Windows installer's inline C# verifier must compile and pass reference
+  # vectors on Windows PowerShell 5.1 (.NET Framework, C# 5) and PowerShell 7.
+  windows-verifier:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verifier vectors on Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          Write-Host "Windows PowerShell $($PSVersionTable.PSVersion)"
+          if ($PSVersionTable.PSVersion.Major -ne 5) { throw 'expected Windows PowerShell 5.1' }
+          foreach ($f in 'packaging\windows\install.ps1', 'packaging\windows\uninstall.ps1') {
+            $errs = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f), [ref]$null, [ref]$errs)
+            if ($errs.Count -gt 0) { $errs | ForEach-Object { Write-Host "${f}: $($_.Message)" }; exit 1 }
+          }
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging\windows\tests\Test-Verifier.ps1
+          exit $LASTEXITCODE
+      - name: Verifier vectors on PowerShell 7
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File packaging/windows/tests/Test-Verifier.ps1
+          exit $LASTEXITCODE

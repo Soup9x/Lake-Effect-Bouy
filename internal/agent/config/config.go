@@ -18,7 +18,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/agent/clamd"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/agent/clamd"
 )
 
 // maxConfigBytes caps the config file size.

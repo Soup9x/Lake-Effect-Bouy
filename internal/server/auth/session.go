@@ -10,10 +10,10 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/server/audit"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/server/httpx"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/server/secret"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/server/store"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/server/audit"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/server/httpx"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/server/secret"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/server/store"
 )
 
 // Auth levels. A session reaches LevelMFA only after a second factor; until

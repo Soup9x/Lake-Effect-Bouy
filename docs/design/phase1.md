@@ -457,3 +457,4 @@ Differences from the sections above, decided during implementation:
 - **Windows credential storage:** file ACLs only (`NT SERVICE\ClamAVAgent` + Administrators). DPAPI machine scope was dropped because any process on the machine can decrypt machine-scoped DPAPI, so it adds little over the ACL.
 - **TOKEN_HASH_KEY rotation:** `TOKEN_HASH_KEY_PREVIOUS` is accepted during a rotation and secrets are re-hashed on use (docs/operations.md).
 - **Breached-password check:** not implemented in Phase 1 (minimum length 12, lockout and rate limiting are).
+- **Windows signature verification is interim:** `install.ps1` verifies minisign with an inline C# BLAKE2b + Ed25519 implementation (Wycheproof and BLAKE2b vector tests in CI on PowerShell 5.1 and 7). It is to be replaced by Authenticode verification once a code-signing certificate exists (Q4).

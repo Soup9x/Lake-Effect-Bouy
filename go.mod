@@ -1,4 +1,4 @@
-module github.com/Soup9x/Lake-Effect-Bouy
+module github.com/Soup9x/Lake-Effect-Buoy
 
 go 1.26.0
 

@@ -13,13 +13,13 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/server/agentapi"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/server/auth"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/server/config"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/server/httpx"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/server/secret"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/server/store"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/server/web"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/server/agentapi"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/server/auth"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/server/config"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/server/httpx"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/server/secret"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/server/store"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/server/web"
 )
 
 // Handler builds the full HTTP handler. Public routes: /agent/v1/*,

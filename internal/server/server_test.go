@@ -22,10 +22,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/protocol"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/server/auth"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/server/config"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/server/store"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/protocol"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/server/auth"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/server/config"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/server/store"
 )
 
 // Integration tests need TEST_DATABASE_URL pointing at a Postgres role that

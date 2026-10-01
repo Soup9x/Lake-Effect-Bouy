@@ -13,8 +13,8 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/agent/sysinfo"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/protocol"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/agent/sysinfo"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/protocol"
 )
 
 // Handler runs one validated action.

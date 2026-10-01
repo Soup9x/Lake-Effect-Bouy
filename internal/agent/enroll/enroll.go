@@ -12,10 +12,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/agent/config"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/agent/credstore"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/agent/sysinfo"
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/protocol"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/agent/config"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/agent/credstore"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/agent/sysinfo"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/protocol"
 )
 
 const maxTokenLen = 256

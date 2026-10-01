@@ -8,7 +8,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/Soup9x/Lake-Effect-Bouy/internal/protocol"
+	"github.com/Soup9x/Lake-Effect-Buoy/internal/protocol"
 )
 
 var (

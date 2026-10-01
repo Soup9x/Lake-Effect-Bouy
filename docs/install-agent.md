@@ -65,6 +65,8 @@ What `install.ps1` does:
 4. Sets ACLs on `%ProgramData%\ClamAVAgent` (inheritance disabled; Administrators full, SYSTEM on the folder only, service Modify so it can replace its credential atomically), enrolls, then locks the credential to the service account + Administrators and makes the config read-only for the service.
 5. Starts the service and prints `clamav-agent status`.
 
+> **Interim Windows verifier.** The inline C# minisign verifier in `install.ps1` is a stopgap until we have a Windows code-signing certificate. It is tested against the Project Wycheproof Ed25519 vectors and the BLAKE2b reference vectors on Windows PowerShell 5.1 and PowerShell 7 (`packaging/windows/tests/Test-Verifier.ps1`, run in CI). Once a certificate is in place, the Windows binary will be Authenticode-signed and `install.ps1` will verify it with `Get-AuthenticodeSignature` (status `Valid` and the expected signer certificate thumbprint) instead, and the inline verifier will be removed.
+
 It is idempotent; `-Reinstall` enrolls again. Uninstall: `.\uninstall.ps1` (or `-KeepData`), then revoke the endpoint in the console.
 
 clamd on Windows must listen on loopback. The agent refuses any clamd address other than `127.0.0.0/8`, `::1` or `localhost`.
