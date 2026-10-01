@@ -83,7 +83,7 @@ func TestLoadConsoleCA(t *testing.T) {
 	}
 }
 
-const testToken = "cav_enr_abcdefghijklmnopqrstuvwxyz234567"
+const testToken = "cav_enr_TESTTOKEN"
 
 func TestInstallCommandsPublicCA(t *testing.T) {
 	c := buildInstallCommands("https://console.example.com", testToken, nil)
