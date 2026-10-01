@@ -123,16 +123,30 @@ func (m *Manager) Login(ctx context.Context, w http.ResponseWriter, r *http.Requ
 		Action: audit.LoginSuccess, TargetType: "session", TargetID: s.ID.String(), Details: map[string]any{"mfa_required": mfa}}); err != nil {
 		return nil, err
 	}
-	// Secure is false only with INSECURE_COOKIES_FOR_DEV=true.
-	http.SetCookie(w, &http.Cookie{Name: m.CookieName(), Value: token, //nolint:gosec // see above Path: "/", HttpOnly: true, Secure: m.Secure,
-		SameSite: http.SameSiteStrictMode, Expires: s.ExpiresAt})
+	c := m.sessionCookie(token) //nolint:gosec // Secure is false only in dev mode, see sessionCookie
+	c.Expires = s.ExpiresAt
+	http.SetCookie(w, c)
 	s.User = *u
 	return s, nil
 }
 
 func (m *Manager) ClearCookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{Name: m.CookieName(), Value: "", //nolint:gosec // Secure is false only in dev mode Path: "/", HttpOnly: true, Secure: m.Secure,
-		SameSite: http.SameSiteStrictMode, MaxAge: -1})
+	c := m.sessionCookie("") //nolint:gosec // Secure is false only in dev mode, see sessionCookie
+	c.MaxAge = -1
+	http.SetCookie(w, c)
+}
+
+// sessionCookie returns the session cookie with its security attributes.
+// Secure is false only with INSECURE_COOKIES_FOR_DEV=true.
+func (m *Manager) sessionCookie(value string) *http.Cookie {
+	return &http.Cookie{ //nolint:gosec // Secure is false only in dev mode, see above
+		Name:     m.CookieName(),
+		Value:    value,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   m.Secure,
+		SameSite: http.SameSiteStrictMode,
+	}
 }
 
 type ctxKey struct{}

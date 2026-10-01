@@ -97,11 +97,16 @@ func SetPassword(ctx context.Context, db DB, id uuid.UUID, hash string) error {
 
 // RecordLoginFailure increments the failure count and locks the account for
 // lockFor once it reaches maxFailures. Returns true if the account is now locked.
+// Once a lock has expired the count starts again from this failure, so a
+// single wrong password after a lockout does not lock the account again.
 func RecordLoginFailure(ctx context.Context, db DB, id uuid.UUID, maxFailures int, lockFor time.Duration) (bool, error) {
 	var locked bool
 	err := db.QueryRow(ctx, `UPDATE users SET
-			failed_login_count = failed_login_count + 1,
-			locked_until = CASE WHEN failed_login_count + 1 >= $2 THEN now() + $3::interval ELSE locked_until END
+			failed_login_count = CASE WHEN locked_until <= now() THEN 1 ELSE failed_login_count + 1 END,
+			locked_until = CASE
+				WHEN (CASE WHEN locked_until <= now() THEN 1 ELSE failed_login_count + 1 END) >= $2 THEN now() + $3::interval
+				WHEN locked_until <= now() THEN NULL
+				ELSE locked_until END
 		WHERE id=$1 RETURNING locked_until IS NOT NULL AND locked_until > now()`, id, maxFailures, lockFor).Scan(&locked)
 	return locked, err
 }

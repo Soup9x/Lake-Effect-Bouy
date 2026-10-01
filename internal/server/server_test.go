@@ -304,4 +304,83 @@ func TestLockout(t *testing.T) {
 	if code != 401 || !strings.Contains(body, "locked") {
 		t.Fatalf("expected lockout, got %d", code)
 	}
+
+	// After the lock expires, one wrong password must not lock the account
+	// again: the count starts over.
+	ctx := context.Background()
+	if _, err := e.pool.Exec(ctx, `UPDATE users SET locked_until=now() - interval '1 second'`); err != nil {
+		t.Fatal(err)
+	}
+	e.form("/login", url.Values{"email": {"admin@example.test"}, "password": {"wrong-password-123"}})
+	var count int
+	var lockedUntil *time.Time
+	if err := e.pool.QueryRow(ctx, `SELECT failed_login_count, locked_until FROM users`).Scan(&count, &lockedUntil); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 || lockedUntil != nil {
+		t.Fatalf("after expired lock: failed_login_count=%d locked_until=%v, want 1 and NULL", count, lockedUntil)
+	}
+	code, body = e.form("/login", url.Values{"email": {"admin@example.test"}, "password": {"correct horse battery staple"}})
+	if code != 200 || !strings.Contains(body, "Tenants") {
+		t.Fatalf("login after expired lock: got %d", code)
+	}
+}
+
+func TestRotationSurvivesLostResponse(t *testing.T) {
+	e := setup(t, "127.0.0.0/8")
+	e.login()
+	_, old := e.enrollAgent()
+	id := strings.SplitN(strings.TrimPrefix(old, protocol.CredentialPrefix), ".", 2)[0]
+	heartbeat := func(cred string) (int, bool) {
+		t.Helper()
+		code, m := e.agentCall(protocol.PathHeartbeat, hb, cred)
+		rotate, _ := m["rotate_credential"].(bool)
+		return code, rotate
+	}
+	rotate := func(cred string) string {
+		t.Helper()
+		code, m := e.agentCall(protocol.PathRotate, struct{}{}, cred)
+		if code != 200 {
+			t.Fatalf("rotate: %d %v", code, m)
+		}
+		return m["credential"].(string)
+	}
+
+	if code, _ := e.form("/agents/"+id+"/rotate", url.Values{}); code != 200 {
+		t.Fatalf("request rotation: %d", code)
+	}
+	if code, r := heartbeat(old); code != 200 || !r {
+		t.Fatalf("heartbeat after request: %d rotate=%v", code, r)
+	}
+
+	// The agent never receives (or fails to save) the first new credential.
+	lost := rotate(old)
+	if code, r := heartbeat(old); code != 200 || !r {
+		t.Fatalf("heartbeat on old credential after lost rotation: %d rotate=%v, want 200 and rotate", code, r)
+	}
+	// It retries with the credential it still holds; the lost one is dropped.
+	got := rotate(old)
+	if code, _ := heartbeat(lost); code != 401 {
+		t.Fatalf("discarded credential: got %d, want 401", code)
+	}
+	if code, r := heartbeat(old); code != 200 || !r {
+		t.Fatalf("old credential during grace after retry: %d rotate=%v", code, r)
+	}
+
+	// First use of the new credential completes the rotation.
+	if code, r := heartbeat(got); code != 200 || r {
+		t.Fatalf("heartbeat on new credential: %d rotate=%v, want 200 and no rotate", code, r)
+	}
+	if code, _ := heartbeat(old); code != 401 {
+		t.Fatalf("old credential after confirmation: got %d, want 401", code)
+	}
+
+	// A rotation requested while another is unconfirmed is not lost.
+	next := rotate(got)
+	if code, _ := e.form("/agents/"+id+"/rotate", url.Values{}); code != 200 {
+		t.Fatalf("request rotation: %d", code)
+	}
+	if code, r := heartbeat(next); code != 200 || !r {
+		t.Fatalf("heartbeat after mid-rotation request: %d rotate=%v, want rotate", code, r)
+	}
 }

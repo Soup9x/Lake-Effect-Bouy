@@ -165,19 +165,28 @@ func RequestRotation(ctx context.Context, db DB, id uuid.UUID) error {
 	return err
 }
 
-// RotateCredential installs a new credential hash and keeps the current one
-// valid until prevExpires.
-func RotateCredential(ctx context.Context, db DB, id uuid.UUID, newHash []byte, prevExpires time.Time) error {
-	_, err := db.Exec(ctx, `UPDATE agents SET credential_prev_hash=credential_hash, credential_prev_expires_at=$3,
-		credential_hash=$2, credential_rotated_at=now(), rotate_requested_at=NULL, updated_at=now() WHERE id=$1`, id, newHash, prevExpires)
+// RotateCredential installs a new credential hash. heldHash is the hash of the
+// credential the agent authenticated with; it stays valid until prevExpires,
+// and the rotation request stays set, until the agent first uses the new
+// credential. If the agent never received or saved the new credential, its
+// next heartbeat (still on heldHash) asks it to rotate again.
+func RotateCredential(ctx context.Context, db DB, id uuid.UUID, newHash, heldHash []byte, prevExpires time.Time) error {
+	_, err := db.Exec(ctx, `UPDATE agents SET credential_prev_hash=$3, credential_prev_expires_at=$4,
+		credential_hash=$2, credential_rotated_at=now(), rotate_requested_at=COALESCE(rotate_requested_at, now()),
+		updated_at=now() WHERE id=$1`, id, newHash, heldHash, prevExpires)
 	return err
 }
 
 // ClearPreviousCredential drops the grace-period credential once the agent
-// has authenticated with the new one.
-func ClearPreviousCredential(ctx context.Context, db DB, id uuid.UUID) error {
-	_, err := db.Exec(ctx, `UPDATE agents SET credential_prev_hash=NULL, credential_prev_expires_at=NULL WHERE id=$1`, id)
-	return err
+// has authenticated with the new one, which completes the rotation. A
+// rotation requested after the credential was issued stays pending. Returns
+// the remaining rotation request, if any.
+func ClearPreviousCredential(ctx context.Context, db DB, id uuid.UUID) (*time.Time, error) {
+	var requested *time.Time
+	err := db.QueryRow(ctx, `UPDATE agents SET credential_prev_hash=NULL, credential_prev_expires_at=NULL,
+		rotate_requested_at = CASE WHEN rotate_requested_at <= credential_rotated_at THEN NULL ELSE rotate_requested_at END
+		WHERE id=$1 RETURNING rotate_requested_at`, id).Scan(&requested)
+	return requested, err
 }
 
 func RehashAgentCredential(ctx context.Context, db DB, id uuid.UUID, hash []byte) error {
