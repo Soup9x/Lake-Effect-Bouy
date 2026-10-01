@@ -195,7 +195,16 @@ func (a *API) auditRejected(ctx context.Context, r *http.Request, tok *store.Enr
 
 type ctxKey struct{}
 
-func agentFrom(r *http.Request) *store.Agent { return r.Context().Value(ctxKey{}).(*store.Agent) }
+// authedAgent is what authenticated stores in the request context.
+type authedAgent struct {
+	agent *store.Agent
+	// heldHash is the current-key hash of the credential the agent presented.
+	heldHash []byte
+}
+
+func authFrom(r *http.Request) authedAgent { return r.Context().Value(ctxKey{}).(authedAgent) }
+
+func agentFrom(r *http.Request) *store.Agent { return authFrom(r).agent }
 
 // authenticated verifies the agent credential. A revoked agent only learns it
 // is revoked (agent_revoked) after proving it holds a valid credential.
@@ -256,11 +265,14 @@ func (a *API) authenticated(next http.HandlerFunc) http.Handler {
 		}
 		if !usedPrev && ag.CredentialPrevHash != nil {
 			// The agent has switched to its new credential; retire the old one.
-			if err := store.ClearPreviousCredential(ctx, a.DB, ag.ID); err != nil {
+			requested, err := store.ClearPreviousCredential(ctx, a.DB, ag.ID)
+			if err != nil {
 				a.Log.Error("clear previous credential failed", "err", err)
+			} else {
+				ag.CredentialPrevHash, ag.CredentialPrevExpiresAt, ag.RotateRequestedAt = nil, nil, requested
 			}
 		}
-		next(w, r.WithContext(context.WithValue(ctx, ctxKey{}, ag)))
+		next(w, r.WithContext(context.WithValue(ctx, ctxKey{}, authedAgent{agent: ag, heldHash: a.Hasher.Hash(cred)})))
 	})
 }
 
@@ -318,11 +330,15 @@ func (a *API) heartbeat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) rotate(w http.ResponseWriter, r *http.Request) {
-	ag := agentFrom(r)
+	authed := authFrom(r)
+	ag := authed.agent
 	ctx := r.Context()
 	credential := protocol.CredentialPrefix + ag.ID.String() + "." + secret.Random(32)
 	err := store.InTx(ctx, a.DB, func(tx pgx.Tx) error {
-		if err := store.RotateCredential(ctx, tx, ag.ID, a.Hasher.Hash(credential), a.now().Add(RotationGrace)); err != nil {
+		// Keep the credential the agent actually holds valid. If it is still on
+		// the previous one (an earlier rotate response was lost or not saved),
+		// the unused credential from that attempt is discarded.
+		if err := store.RotateCredential(ctx, tx, ag.ID, a.Hasher.Hash(credential), authed.heldHash, a.now().Add(RotationGrace)); err != nil {
 			return err
 		}
 		if err := store.AddAgentEvent(ctx, tx, ag.ID, ag.TenantID, "credential_rotated", nil); err != nil {
