@@ -58,6 +58,7 @@ func enrollCmd(args []string) int {
 	clamdAddr := fs.String("clamd", config.DefaultClamdAddress, "clamd address: unix:///path or tcp://127.0.0.1:PORT")
 	replace := fs.Bool("replace", false, "re-enroll, replacing an existing agent for this machine")
 	pin := fs.String("ca-cert-pin", "", "optional base64 SHA-256 SPKI pin for the console's certificate chain")
+	caFile := fs.String("ca-cert-file", "", "optional absolute path to a PEM file with the console's private CA; only these CAs are then trusted")
 	insecure := fs.Bool("insecure-http-for-testing", false, "allow an http:// server URL (TESTING ONLY)")
 	if !parseFlags(fs, args) {
 		return exitUsage
@@ -70,6 +71,7 @@ func enrollCmd(args []string) int {
 		ServerURL:              *server,
 		Clamd:                  config.ClamdConfig{Address: *clamdAddr},
 		CACertPin:              *pin,
+		CACertFile:             *caFile,
 		LogLevel:               "info",
 		InsecureHTTPForTesting: *insecure,
 	}
@@ -90,6 +92,11 @@ func enrollCmd(args []string) int {
 		return exitUsage
 	}
 	pinBytes, _ := cfg.Pin()
+	roots, err := cfg.RootCAs()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "enroll:", err)
+		return exitUsage
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	res, err := enroll.Run(ctx, enroll.Options{
@@ -99,7 +106,7 @@ func enrollCmd(args []string) int {
 		Token:          token,
 		Version:        version,
 		Replace:        *replace,
-		HTTP:           transport.NewClient(transport.Options{SPKIPin: pinBytes}),
+		HTTP:           transport.NewClient(transport.Options{SPKIPin: pinBytes, RootCAs: roots}),
 		Info:           sysinfo.Collect(),
 	})
 	if err != nil {
@@ -169,11 +176,17 @@ func runAgent(ctx context.Context, cfgPath, credPath string) int {
 		return exitConfig
 	}
 	level.Set(logging.ParseLevel(cfg.LogLevel))
-	logger.Info("clamav-agent starting", "version", version, "server", cfg.ServerURL, "clamd", cfg.Clamd.Address, "pinned", cfg.CACertPin != "")
+	logger.Info("clamav-agent starting", "version", version, "server", cfg.ServerURL, "clamd", cfg.Clamd.Address,
+		"pinned", cfg.CACertPin != "", "ca_cert_file", cfg.CACertFile)
 	if cfg.InsecureHTTPForTesting {
 		logger.Error("INSECURE: insecure_http_for_testing is enabled; the credential may be sent without TLS. NEVER use this in production.")
 	}
 	pin, _ := cfg.Pin() // validated by Load
+	roots, err := cfg.RootCAs()
+	if err != nil {
+		logger.Error("cannot load ca_cert_file; not starting", "error", err)
+		return exitConfig
+	}
 	addr, _ := clamd.ParseAddress(cfg.Clamd.Address)
 	cc := clamd.New(addr)
 	disp := &actions.Dispatcher{Logger: logger}
@@ -181,7 +194,7 @@ func runAgent(ctx context.Context, cfgPath, credPath string) int {
 	lastStatus := ""
 	agent := &heartbeat.Agent{
 		ServerURL: cfg.ServerURL,
-		HTTP:      transport.NewClient(transport.Options{SPKIPin: pin}),
+		HTTP:      transport.NewClient(transport.Options{SPKIPin: pin, RootCAs: roots}),
 		Store:     credstore.Store{Path: credPath},
 		Version:   version,
 		Logger:    logger,
@@ -234,6 +247,14 @@ func statusCmd(args []string) int {
 		fmt.Printf("  server_url: %s\n", cfg.ServerURL)
 		fmt.Printf("  clamd:      %s\n", cfg.Clamd.Address)
 		fmt.Printf("  cert pin:   %v\n", cfg.CACertPin != "")
+		if cfg.CACertFile != "" {
+			fmt.Printf("  ca_cert:    %s", cfg.CACertFile)
+			if _, err := cfg.RootCAs(); err != nil {
+				healthy = false
+				fmt.Printf(" (ERROR: %v)", err)
+			}
+			fmt.Println()
+		}
 		fmt.Printf("  log_level:  %s\n", cfg.LogLevel)
 		if cfg.InsecureHTTPForTesting {
 			fmt.Printf("  WARNING:    insecure_http_for_testing is enabled\n")

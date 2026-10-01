@@ -62,8 +62,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # The Windows installer's inline C# verifier must compile and pass reference
-  # vectors on Windows PowerShell 5.1 (.NET Framework, C# 5) and PowerShell 7.
+  # The Windows installer's inline C# (minisign verifier and private-CA
+  # certificate check) must compile and pass its tests on Windows PowerShell
+  # 5.1 (.NET Framework, C# 5) and PowerShell 7.
   windows-verifier:
     runs-on: windows-latest
     steps:
@@ -79,9 +80,13 @@ jobs:
             if ($errs.Count -gt 0) { $errs | ForEach-Object { Write-Host "${f}: $($_.Message)" }; exit 1 }
           }
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging\windows\tests\Test-Verifier.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File packaging\windows\tests\Test-Tls.ps1
           exit $LASTEXITCODE
       - name: Verifier vectors on PowerShell 7
         shell: pwsh
         run: |
           pwsh -NoProfile -File packaging/windows/tests/Test-Verifier.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -NoProfile -File packaging/windows/tests/Test-Tls.ps1
           exit $LASTEXITCODE

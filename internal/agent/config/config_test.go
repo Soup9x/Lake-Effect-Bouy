@@ -1,6 +1,10 @@
 package config
 
 import (
+	"bytes"
+	"encoding/pem"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,6 +50,7 @@ func TestParseBad(t *testing.T) {
 		"bad pin":       "server_url: https://h\nclamd: {address: tcp://127.0.0.1:3310}\nca_cert_pin: abc\n",
 		"bad level":     "server_url: https://h\nclamd: {address: tcp://127.0.0.1:3310}\nlog_level: trace\n",
 		"two docs":      "server_url: https://h\nclamd: {address: tcp://127.0.0.1:3310}\n---\nserver_url: https://evil\n",
+		"relative CA":   "server_url: https://h\nclamd: {address: tcp://127.0.0.1:3310}\nca_cert_file: ca.pem\n",
 	}
 	for name, y := range cases {
 		if c, err := Parse([]byte(y)); err == nil {
@@ -82,5 +87,50 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	entries, _ := os.ReadDir(filepath.Dir(p))
 	if len(entries) != 1 {
 		t.Fatalf("temp files left behind: %v", entries)
+	}
+}
+
+func TestCACertFile(t *testing.T) {
+	dir := t.TempDir()
+	ca := filepath.Join(dir, "ca.pem")
+	c, err := Parse([]byte("server_url: https://h\nclamd: {address: tcp://127.0.0.1:3310}\nca_cert_file: " + ca + "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.RootCAs(); err == nil {
+		t.Fatal("missing ca_cert_file accepted")
+	}
+
+	srv := httptest.NewTLSServer(http.NotFoundHandler())
+	srv.Close()
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
+	write := func(b []byte) {
+		t.Helper()
+		if err := os.WriteFile(ca, b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(certPEM)
+	if pool, err := c.RootCAs(); err != nil || pool == nil {
+		t.Fatalf("valid CA rejected: %v", err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: []byte("x")})
+	for name, b := range map[string][]byte{
+		"empty":     nil,
+		"not PEM":   []byte("hello"),
+		"trailing":  append(append([]byte{}, certPEM...), "junk"...),
+		"key block": append(append([]byte{}, certPEM...), keyPEM...),
+		"bad cert":  pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("x")}),
+		"too large": append(append([]byte{}, certPEM...), bytes.Repeat([]byte("\n"), maxCACertBytes)...),
+	} {
+		write(b)
+		if _, err := c.RootCAs(); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if c, _ := Parse([]byte(goodYAML)); c.CACertFile != "" {
+		t.Fatal("ca_cert_file set without being configured")
+	} else if pool, err := c.RootCAs(); pool != nil || err != nil {
+		t.Fatalf("no ca_cert_file: %v %v", pool, err)
 	}
 }

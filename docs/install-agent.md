@@ -11,6 +11,19 @@ The agent runs on each client endpoint, asks the local clamd for its status (`PI
 | Logs | journal: `journalctl -u clamav-agent` | `%ProgramData%\ClamAVAgent\logs\agent.log` (5 MB x 3), plus stderr |
 | clamd | Unix socket (auto-detected) | `tcp://127.0.0.1:3310` (read from `clamd.conf`) |
 
+## Quick install: paste one command
+
+In the console, open the client's tenant, go to *Enrollment tokens* and create a token. The page shows the token once, with a ready-made command for each OS:
+
+- **Linux:** paste it into a terminal on the endpoint. It uses `sudo` (drop `sudo` if you are already root).
+- **Windows:** paste it into PowerShell opened with *Run as administrator*.
+
+That is all: the command downloads the installer, which verifies the agent's release signature, installs it as a service, enrolls the machine and starts it. Within about a minute the endpoint shows as online. The token is passed to the installer on stdin (Linux) or in the PowerShell session's environment (Windows), never as a command-line argument. The Linux command starts with a space so that bash's `ignorespace` (Ubuntu's default) keeps it out of the shell history.
+
+If the console uses a private CA (for example a test VM reached by IP address, see [Console with a private CA](#console-with-a-private-ca)), the commands also carry the CA's fingerprint and need nothing installed beforehand.
+
+The sections below describe the installers' options, for running them from an RMM tool or by hand.
+
 ## What you need
 
 - The console URL, e.g. `https://console.example.com` (must be https).
@@ -23,23 +36,26 @@ Supported: systemd distributions on amd64 and arm64. Run as root:
 
 ```sh
 curl -fsSL https://console.example.com/downloads/install.sh -o install.sh
-CAV_SERVER_URL=https://console.example.com CAV_ENROLL_TOKEN=cav_enr_... sh install.sh
+printf '%s\n' 'cav_enr_...' | sh install.sh --server https://console.example.com --token-stdin
 ```
 
-Inputs (environment variables):
+Options (each can also be given as an environment variable, which suits RMM tools that run scripts as root with variables):
 
-| Variable | Required | Meaning |
-|---|---|---|
-| `CAV_SERVER_URL` | yes | Console URL, `https://` only |
-| `CAV_ENROLL_TOKEN` | to enroll | Enrollment token. Passed to the agent via the environment, never on a command line |
-| `CAV_CLAMD_ADDR` | no | `unix:///path/to/clamd.sock` or `tcp://127.0.0.1:3310`. Default: first existing of `/run/clamav/clamd.ctl` (Debian/Ubuntu), `/run/clamd.scan/clamd.sock` (RHEL), `/var/run/clamav/clamd.ctl` |
+| Option | Variable | Required | Meaning |
+|---|---|---|---|
+| `--server URL` | `CAV_SERVER_URL` | yes | Console URL, `https://` only |
+| `--token-stdin` | `CAV_ENROLL_TOKEN` | to enroll | Enrollment token, read from stdin with `--token-stdin`. Passed to the agent via the environment, never on a command line |
+| `--ca-sha256 HEX` | `CAV_CA_SHA256` | private CA only | SHA-256 fingerprint of the console's CA certificate (see below) |
+| `--clamd ADDR` | `CAV_CLAMD_ADDR` | no | `unix:///path/to/clamd.sock` or `tcp://127.0.0.1:3310`. Default: first existing of `/run/clamav/clamd.ctl` (Debian/Ubuntu), `/run/clamd.scan/clamd.sock` (RHEL), `/var/run/clamav/clamd.ctl` |
+| `--reinstall` | | no | Enroll again with a new token |
 
 What `install.sh` does:
 
-1. Downloads `clamav-agent_linux_<arch>`, `clamav-agent.service` and their `.minisig` files from `$CAV_SERVER_URL/downloads/`.
-2. **Verifies the minisign signatures** with the release public key embedded in the script (see below). Nothing is installed if verification fails.
-3. Creates the system user `clamav-agent` (no login shell) and adds it to the group that owns the clamd socket.
-4. Installs the binary, runs `clamav-agent enroll`, sets ownership/permissions, installs and starts the hardened systemd unit.
+1. With `--ca-sha256`: downloads the console's CA certificate and continues only if its fingerprint matches. Otherwise reuses a CA installed by an earlier run, if any.
+2. Downloads `clamav-agent_linux_<arch>`, `clamav-agent.service` and their `.minisig` files from `$CAV_SERVER_URL/downloads/`.
+3. **Verifies the minisign signatures** with the release public key embedded in the script (see below). Nothing is installed if verification fails.
+4. Creates the system user `clamav-agent` (no login shell) and adds it to the group that owns the clamd socket.
+5. Installs the binary (and the CA at `/etc/clamav-agent/console-ca.pem`), runs `clamav-agent enroll`, sets ownership/permissions, installs and starts the hardened systemd unit.
 
 It is idempotent: running it again upgrades the binary and unit and keeps the existing enrollment (no token needed). `sh install.sh --reinstall` enrolls again with a new token and asks the console to replace this machine's previous agent.
 
@@ -50,20 +66,25 @@ Uninstall: `sh uninstall.sh` (or `--keep-data` to keep config and credential). T
 Windows Server 2016+ / Windows 10+, amd64, Windows PowerShell 5.1 or PowerShell 7. In an elevated PowerShell:
 
 ```powershell
-Invoke-WebRequest https://console.example.com/downloads/install.ps1 -OutFile install.ps1
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+Invoke-WebRequest -UseBasicParsing https://console.example.com/downloads/install.ps1 -OutFile install.ps1
 $env:CAV_ENROLL_TOKEN = 'cav_enr_...'
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -ServerUrl https://console.example.com
+Remove-Item Env:\CAV_ENROLL_TOKEN
 ```
 
-Parameters: `-ServerUrl` (required, https), `-EnrollToken` (or `$env:CAV_ENROLL_TOKEN`; the environment variable keeps the token out of the process list), `-ClamdAddress` (default: `TCPAddr`/`TCPSocket` from `%ProgramFiles%\ClamAV\clamd.conf`, else `tcp://127.0.0.1:3310`), `-Reinstall`.
+(The first line matters on older Windows PowerShell, which may otherwise try TLS 1.0.)
+
+Parameters: `-ServerUrl` (required, https), `-EnrollToken` (or `$env:CAV_ENROLL_TOKEN`; the environment variable keeps the token out of the process list), `-CaSha256` (or `$env:CAV_CA_SHA256`; private CA only, see below), `-ClamdAddress` (default: `TCPAddr`/`TCPSocket` from `%ProgramFiles%\ClamAV\clamd.conf`, else `tcp://127.0.0.1:3310`), `-Reinstall`. From an RMM tool that runs scripts as SYSTEM, run `install.ps1` with these parameters and the token in `CAV_ENROLL_TOKEN`.
 
 What `install.ps1` does:
 
-1. Downloads `clamav-agent_windows_amd64.exe` and its `.minisig`.
-2. **Verifies the minisign signature** with the embedded release public key. Windows has no built-in Ed25519 or BLAKE2b, so the script compiles a small C# verifier (`Add-Type`).
-3. Installs the binary to `%ProgramFiles%\ClamAVAgent`, creates the `ClamAVAgent` service (automatic start) running as `NT SERVICE\ClamAVAgent`, recovery = restart on crash.
-4. Sets ACLs on `%ProgramData%\ClamAVAgent` (inheritance disabled; Administrators full, SYSTEM on the folder only, service Modify so it can replace its credential atomically), enrolls, then locks the credential to the service account + Administrators and makes the config read-only for the service.
-5. Starts the service and prints `clamav-agent status`.
+1. With `-CaSha256`: downloads the console's CA certificate and continues only if its fingerprint matches; all further downloads must then chain to that CA. Otherwise reuses a CA installed by an earlier run, if any.
+2. Downloads `clamav-agent_windows_amd64.exe` and its `.minisig`.
+3. **Verifies the minisign signature** with the embedded release public key. Windows has no built-in Ed25519 or BLAKE2b, so the script compiles a small C# verifier (`Add-Type`).
+4. Installs the binary to `%ProgramFiles%\ClamAVAgent`, creates the `ClamAVAgent` service (automatic start) running as `NT SERVICE\ClamAVAgent`, recovery = restart on crash.
+5. Sets ACLs on `%ProgramData%\ClamAVAgent` (inheritance disabled; Administrators full, SYSTEM on the folder only, service Modify so it can replace its credential atomically), installs the CA (if any) as `console-ca.pem`, enrolls, then locks the credential to the service account + Administrators and makes the config and CA read-only for the service.
+6. Starts the service and prints `clamav-agent status`.
 
 > **Interim Windows verifier.** The inline C# minisign verifier in `install.ps1` is a stopgap until we have a Windows code-signing certificate. It is tested against the Project Wycheproof Ed25519 vectors and the BLAKE2b reference vectors on Windows PowerShell 5.1 and PowerShell 7 (`packaging/windows/tests/Test-Verifier.ps1`, run in CI). Once a certificate is in place, the Windows binary will be Authenticode-signed and `install.ps1` will verify it with `Get-AuthenticodeSignature` (status `Valid` and the expected signer certificate thumbprint) instead, and the inline verifier will be removed.
 
@@ -71,11 +92,24 @@ It is idempotent; `-Reinstall` enrolls again. Uninstall: `.\uninstall.ps1` (or `
 
 clamd on Windows must listen on loopback. The agent refuses any clamd address other than `127.0.0.0/8`, `::1` or `localhost`.
 
+## Console with a private CA
+
+A console reached by IP address or by a local name (for example a test VM at `https://192.168.1.50` or `https://buoy.internal`) gets its TLS certificate from Caddy's internal CA, which endpoints do not trust. `deploy/setup.sh` publishes that CA as `/downloads/console-ca.pem`, and the console then adds the CA's SHA-256 fingerprint to every install command. Nothing needs to be installed on endpoints beforehand:
+
+- The CA certificate is fetched without TLS verification (it is what TLS will be verified with) and used only if its fingerprint matches the one in the command, which you copied from the console together with the token.
+- **Linux:** the command then fetches `install.sh` over TLS checked against that CA only (`curl --cacert`), and `install.sh` checks the CA again.
+- **Windows:** PowerShell has no per-request CA option, so the command pins `install.ps1` itself by its SHA-256 (computed by the console from the published file). `install.ps1` then checks the CA again and requires every further download to chain to it. If you publish a new agent release, generate a new command, because the old one pins the old `install.ps1`.
+- The agent stores the CA (`/etc/clamav-agent/console-ca.pem`, `%ProgramData%\ClamAVAgent\console-ca.pem`) and its config points to it with `ca_cert_file`. The agent then trusts **only** that CA for the console, not the system trust store. Upgrade runs of the installers reuse the installed CA; `--reinstall` / `-Reinstall` uses only what its command gives it.
+
+If the console later moves to a publicly trusted certificate, re-enroll endpoints with a fresh command from the console plus `--reinstall` / `-Reinstall`; the old CA is removed. (Or remove the `ca_cert_file` line from `agent.yaml` and restart the agent.)
+
+The fingerprint is shown on the token page and printed by `setup.sh`; you can compare it with `openssl x509 -in console-ca.pem -noout -fingerprint -sha256`.
+
 ## What the scripts verify, and the trust chain
 
 Agent binaries are signed offline with a minisign (Ed25519) key that never touches the console server (see [release-signing.md](release-signing.md)). The public key is compiled into the agent and baked into both install scripts at build time; it is **never** fetched from the server. The scripts check the key id, the file signature (prehashed `ED` or legacy `Ed`) and the trusted-comment signature, and abort on any mismatch. On Linux they use the `minisign` CLI when installed, otherwise `openssl` 3.x + `b2sum`; if neither is available they abort.
 
-The one-liners above fetch the install script itself from the console, so a compromised console could serve a modified script. For the strictest trust, deploy the install script from the signed release bundle (via your RMM or a file share) and check its own signature first with any minisign verifier, e.g. `minisign -Vm install.sh -P <release public key>`, or `clamav-agent verify install.sh install.sh.minisig` with an agent you already trust.
+The commands from the console fetch the install script itself from the console, so a compromised console could serve a modified script (with a private CA, the CA fingerprint and the Windows script hash also come from the console). For the strictest trust, deploy the install script from the signed release bundle (via your RMM or a file share) and check its own signature first with any minisign verifier, e.g. `minisign -Vm install.sh -P <release public key>`, or `clamav-agent verify install.sh install.sh.minisig` with an agent you already trust.
 
 You can also check any downloaded file by hand:
 
@@ -105,7 +139,7 @@ sh install.sh --verify-only clamav-agent_linux_amd64 clamav-agent_linux_amd64.mi
 
 **Network errors / 5xx / 429.** Retried with exponential backoff from 60 s up to 5 minutes, then the normal interval resumes.
 
-**Self-hosted or private CA.** The agent uses the system trust store. Optionally pin the console's certificate chain with `ca_cert_pin` (base64 SHA-256 of a SubjectPublicKeyInfo in the chain) in `agent.yaml`, or pass `--ca-cert-pin` to `clamav-agent enroll`. Compute it with:
+**Self-hosted or private CA.** By default the agent uses the system trust store. For a console with a private CA, the installers set `ca_cert_file` (see [Console with a private CA](#console-with-a-private-ca)); the agent then trusts only that CA. "console CA fingerprint mismatch" means the CA served by the console is not the one in your command: do not work around it; check the fingerprint in the console and `setup.sh` output. Separately, you can pin the console's certificate chain with `ca_cert_pin` (base64 SHA-256 of a SubjectPublicKeyInfo in the chain) in `agent.yaml`, or pass `--ca-cert-pin` to `clamav-agent enroll`. Compute it with:
 `openssl x509 -in ca.pem -pubkey -noout | openssl pkey -pubin -outform DER | openssl dgst -sha256 -binary | base64`
 
 **Proxy.** The agent honours `HTTPS_PROXY`/`NO_PROXY` (set them in a systemd drop-in, or in the service's environment on Windows).

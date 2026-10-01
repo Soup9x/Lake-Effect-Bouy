@@ -32,6 +32,17 @@ scripts/                      release build and signing scripts
 docs/                         design, operations, agent install, release signing
 ```
 
+## Quick start
+
+On an Ubuntu server with Docker (`sudo apt install docker.io docker-compose-v2 git openssl curl`):
+
+```sh
+git clone https://github.com/Soup9x/Lake-Effect-Buoy.git
+Lake-Effect-Buoy/deploy/setup.sh     # asks for the hostname/IP and admin network, starts everything, creates the first admin
+```
+
+Publish a signed agent release ([docs/operations.md](docs/operations.md#publish-an-agent-release)), then create an enrollment token in the console and paste the one-line install command it shows on each Linux or Windows endpoint ([docs/install-agent.md](docs/install-agent.md)). A test VM reached by IP address works too: the commands pin the console's private CA.
+
 ## Docs
 
 - [Phase 1 design](docs/design/phase1.md)

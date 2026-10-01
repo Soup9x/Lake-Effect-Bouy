@@ -28,7 +28,7 @@ import (
 func Handler(cfg *config.Config, pool *pgxpool.Pool, log *slog.Logger) http.Handler {
 	hasher := secret.NewHasher(cfg.TokenHashKey, cfg.TokenHashKeyPrevious)
 	am := auth.NewManager(pool, hasher, log, cfg.SessionIdleTimeout, cfg.SessionAbsoluteTimeout, cfg.CookieSecure)
-	ui := web.New(pool, am, hasher, log, cfg.PublicURL, cfg.AgentOfflineAfter)
+	ui := web.New(pool, am, hasher, log, cfg.PublicURL, cfg.AgentOfflineAfter, cfg.DownloadsDir)
 
 	public := http.NewServeMux()
 	agentapi.New(pool, hasher, log).Register(public)

@@ -1,5 +1,8 @@
 {
 	email {$ACME_EMAIL}
+	# Clients send no SNI when the console is reached by IP address (e.g. a
+	# test VM with Caddy's internal CA); answer with the console's certificate.
+	default_sni {$CAV_HOSTNAME}
 }
 
 {$CAV_HOSTNAME} {

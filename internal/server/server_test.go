@@ -3,17 +3,26 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
+	"html"
 	"io"
 	"log/slog"
+	"math/big"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -65,11 +74,12 @@ func testDB(t *testing.T) *pgxpool.Pool {
 }
 
 type env struct {
-	t      *testing.T
-	pool   *pgxpool.Pool
-	srv    *httptest.Server
-	client *http.Client
-	csrf   string
+	t         *testing.T
+	pool      *pgxpool.Pool
+	srv       *httptest.Server
+	client    *http.Client
+	csrf      string
+	downloads string
 }
 
 func setup(t *testing.T, allowed string) *env {
@@ -84,7 +94,7 @@ func setup(t *testing.T, allowed string) *env {
 	srv := httptest.NewServer(Handler(cfg, pool, log))
 	t.Cleanup(srv.Close)
 	jar, _ := cookiejar.New(nil)
-	return &env{t: t, pool: pool, srv: srv, client: &http.Client{Jar: jar}}
+	return &env{t: t, pool: pool, srv: srv, client: &http.Client{Jar: jar}, downloads: cfg.DownloadsDir}
 }
 
 func (e *env) do(method, path string, body io.Reader, hdr map[string]string) (int, string) {
@@ -382,5 +392,52 @@ func TestRotationSurvivesLostResponse(t *testing.T) {
 	}
 	if code, r := heartbeat(next); code != 200 || !r {
 		t.Fatalf("heartbeat after mid-rotation request: %d rotate=%v, want rotate", code, r)
+	}
+}
+
+// TestInstallCommandsPinPrivateCA: once a private CA is published in the
+// downloads directory, new tokens come with commands that pin it.
+func TestInstallCommandsPinPrivateCA(t *testing.T) {
+	e := setup(t, "127.0.0.0/8")
+	e.login()
+	_, body := e.form("/tenants", url.Values{"name": {"Acme"}})
+	tenantID := regexp.MustCompile(`/tenants/([0-9a-f-]{36})/tokens`).FindStringSubmatch(body)[1]
+	newToken := func() string {
+		t.Helper()
+		_, body := e.form("/tenants/"+tenantID+"/tokens", url.Values{"label": {"t"}, "expires_days": {"1"}})
+		return html.UnescapeString(body)
+	}
+
+	body = newToken()
+	if !strings.Contains(body, "--token-stdin") || strings.Contains(body, "--ca-sha256") || !strings.Contains(body, "Invoke-WebRequest") {
+		t.Fatal("public-CA commands missing or pinned")
+	}
+
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "Caddy Local Authority"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), BasicConstraintsValid: true, IsCA: true}
+	der, _ := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err := os.WriteFile(filepath.Join(e.downloads, "console-ca.pem"), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(e.downloads, "install.ps1"), []byte("# install.ps1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(der)
+	fp := hex.EncodeToString(sum[:])
+	body = newToken()
+	for _, want := range []string{"--ca-sha256 " + fp, "-CaSha256 " + fp, `--cacert "$d/ca.pem"`, strings.ToUpper(fp[:2]) + ":"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("private-CA token page lacks %q", want)
+		}
+	}
+
+	// A broken CA file yields an explanation, not unpinned commands.
+	if err := os.WriteFile(filepath.Join(e.downloads, "console-ca.pem"), []byte("junk"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	body = newToken()
+	if !strings.Contains(body, "console CA published in the downloads directory is invalid") || (strings.Contains(body, "install.sh") && strings.Contains(body, "sudo sh")) {
+		t.Fatal("invalid CA file: expected an error and no install commands")
 	}
 }
