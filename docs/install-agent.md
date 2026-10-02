@@ -48,6 +48,7 @@ Options (each can also be given as an environment variable, which suits RMM tool
 | `--ca-sha256 HEX` | `CAV_CA_SHA256` | private CA only | SHA-256 fingerprint of the console's CA certificate (see below) |
 | `--clamd ADDR` | `CAV_CLAMD_ADDR` | no | `unix:///path/to/clamd.sock` or `tcp://127.0.0.1:3310`. Default: first existing of `/run/clamav/clamd.ctl` (Debian/Ubuntu), `/run/clamd.scan/clamd.sock` (RHEL), `/var/run/clamav/clamd.ctl` |
 | `--no-clamav-setup` | `CAV_CLAMAV_SETUP=0` | no | Leave ClamAV alone (see [ClamAV setup](#clamav-setup-linux)). Implied by `--clamd` |
+| `--scan-roots LIST` | `CAV_SCAN_ROOTS` | no | Folders the console may scan, comma-separated, e.g. `/srv,/var/www`. An empty list turns scans off. Default: keep the current list (none on a new install). See [Actions from the console](#actions-from-the-console) |
 | `--reinstall` | | no | Enroll again with a new token |
 
 What `install.sh` does:
@@ -68,7 +69,7 @@ Unless you pass `--no-clamav-setup` (or `--clamd`, which means you manage clamd 
 
 1. Installs `clamav-daemon` and `clamav-freshclam` with `apt-get` if clamd is missing (waiting up to 5 minutes for another apt run, such as unattended upgrades, to finish).
 2. Enables `clamav-freshclam` and waits for it to download the virus databases. Ubuntu's `clamav-daemon` does not start without them.
-3. Turns on clamd's `VERSION` and `RELOAD` commands where `/etc/clamav/clamd.conf` lists them as off (ClamAV 1.5 packages ship them off; the agent needs `VERSION` to report signature versions, and freshclam uses `RELOAD` to load new signatures). The original file is kept as `clamd.conf.cav-orig`. Options the file does not list are left alone, because older clamd refuses unknown options.
+3. Turns on clamd's `VERSION`, `RELOAD` and `STATS` commands where `/etc/clamav/clamd.conf` lists them as off (ClamAV 1.5 packages ship them off; the agent needs `VERSION` to report signature versions, freshclam and the console's "Reload signatures" action use `RELOAD`, and the "clamd stats" action uses `STATS`). The original file is kept as `clamd.conf.cav-orig`. Options the file does not list are left alone, because older clamd refuses unknown options.
 4. Enables and starts `clamav-daemon`.
 
 On other distributions it installs nothing and prints what to do (RHEL/Rocky/Alma: `dnf install clamd clamav-update` from EPEL); install and start clamd, then run the installer again (no token needed).
@@ -133,6 +134,30 @@ sh install.sh --verify-only clamav-agent_linux_amd64 clamav-agent_linux_amd64.mi
 ```powershell
 .\install.ps1 -VerifyOnly -VerifyFile .\clamav-agent_windows_amd64.exe -VerifySignatureFile .\clamav-agent_windows_amd64.exe.minisig
 ```
+
+## Actions from the console
+
+The console can ask an endpoint to run one of a fixed list of ClamAV actions, on one endpoint (the endpoint's page) or on many at once (a tenant's **Run action…** button). Nothing else can be run: the agent has no way to execute commands, scripts or programs sent by the console (CLAUDE.md rule 1).
+
+| Action | What the endpoint does | Needs in `clamd.conf` |
+|---|---|---|
+| Check clamd | Asks clamd for its version and signature database version | `EnableVersionCommand yes` |
+| Reload signatures | Tells clamd to reload its signature databases (`RELOAD`) | `EnableReloadCommand yes` |
+| clamd stats | Returns clamd's thread pool and queue statistics (`STATS`) | `EnableStatsCommand yes` |
+| Scan a folder | clamd scans the folder (`CONTSCAN`) and reports infected files and files it could not read. Nothing is quarantined or deleted | a scan folder set on the endpoint (below) |
+
+The Linux installer turns these clamd commands on. On Windows, set them in `clamd.conf` yourself if your build ships them off.
+
+Endpoints pick actions up on their next heartbeat (within about a minute) and check in every 15 seconds while they have actions open. An action not picked up within 24 hours expires; a running action must report within 10 minutes (4 hours 15 minutes for scans). One scan runs at a time per endpoint. Results are kept for 90 days.
+
+**Scan folders.** The console can only scan folders that were allowed **on the endpoint itself**; the list lives in the agent's local config (`scan_roots` in `agent.yaml`) and the console cannot change it. Until one is set, scan requests are refused. A requested folder must be inside an allowed folder after symlinks are resolved. To set the list (it replaces the old one; no arguments turns scans off):
+
+- Linux: rerun the installer with `--scan-roots /srv,/var/www` (no token needed), or `sudo clamav-agent set-scan-roots /srv /var/www && sudo systemctl restart clamav-agent`
+- Windows: `& "$env:ProgramFiles\ClamAVAgent\clamav-agent.exe" set-scan-roots D:\Shares E:\Web; Restart-Service ClamAVAgent`
+
+clamd runs as its own user (`clamav` on Debian/Ubuntu), so it can only scan files that user can read; others are listed as "not scanned" with the reason. Scanning a large tree loads the machine like any clamd scan.
+
+**Output and export.** Each run opens a page that updates as endpoints report, with a link to each endpoint's full output. Export a run as CSV or JSON, or just the infected files of a scan as CSV; an endpoint's page exports its action history. Cells that a spreadsheet would treat as a formula are prefixed with `'`, since file names on an endpoint can be chosen by an attacker. Every queue and cancel, and every refused request, is recorded in the audit log.
 
 ## Checking status
 

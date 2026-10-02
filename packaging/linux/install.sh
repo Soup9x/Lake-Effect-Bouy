@@ -18,6 +18,11 @@
 #                                         tcp://127.0.0.1:3310); default: auto-detect.
 #                                         Implies --no-clamav-setup.
 #   --no-clamav-setup   CAV_CLAMAV_SETUP=0  leave ClamAV alone (see below)
+#   --scan-roots LIST   CAV_SCAN_ROOTS    folders the console may scan, comma-
+#                                         separated (e.g. /srv,/var/www); an empty
+#                                         LIST turns scans off. Default: keep the
+#                                         current list (none on a new install, so
+#                                         scans from the console are refused).
 #   --reinstall                           enroll again with a new token
 #
 # The agent binary and the systemd unit are downloaded from
@@ -27,7 +32,7 @@
 #
 # ClamAV setup (Debian/Ubuntu, unless --no-clamav-setup): installs
 # clamav-daemon if clamd is missing, enables freshclam and waits for the
-# virus databases, turns on clamd's VERSION and RELOAD commands where
+# virus databases, turns on clamd's VERSION, RELOAD and STATS commands where
 # clamd.conf lists them as off (the original is kept as clamd.conf.cav-orig),
 # and starts clamd. Other distributions get instructions instead.
 #
@@ -334,6 +339,7 @@ setup_clamav() {
     if [ -f "$CLAMD_CONF" ]; then
         if enable_clamd_command EnableVersionCommand; then _changed=1; fi
         if enable_clamd_command EnableReloadCommand; then _changed=1; fi
+        if enable_clamd_command EnableStatsCommand; then _changed=1; fi
     fi
     systemctl enable clamav-daemon.service >/dev/null 2>&1 || true
     if [ "$_changed" = 1 ] || ! systemctl is-active --quiet clamav-daemon.service; then
@@ -348,6 +354,29 @@ setup_clamav() {
 
 # final_check: wait (a few minutes at most) for the agent to reach clamd,
 # then say plainly whether anything is left to do.
+# apply_scan_roots LIST: set the folders the console may scan, from a comma-
+# separated list (empty: none). The agent validates each folder; this is the
+# only way to allow scans, and it needs root on this machine.
+apply_scan_roots() {
+    _list=$1
+    set -f
+    set --
+    _old_ifs=$IFS
+    IFS=,
+    for _d in $_list; do
+        _d=$(printf '%s' "$_d" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+        if [ -n "$_d" ]; then set -- "$@" "$_d"; fi
+    done
+    IFS=$_old_ifs
+    set +f
+    "$BIN_DST" set-scan-roots --config "$CONF_FILE" "$@" >/dev/null || die "--scan-roots: folders must be absolute paths"
+    if [ $# -eq 0 ]; then
+        say "scans from the console are off on this machine"
+    else
+        say "the console may scan under: $*"
+    fi
+}
+
 final_check() {
     _i=0
     while :; do
@@ -383,6 +412,12 @@ final_check() {
         *)
             echo "ACTION NEEDED: clamd is not answering. Check: systemctl status clamav-daemon; journalctl -u clamav-daemon -n 30" >&2
             echo "  (On a small VM clamd may need more memory: about 1.5 GB.) The agent keeps retrying; once clamd is up, nothing else is needed." >&2
+            ;;
+    esac
+    case "$_out" in
+        *"scan_roots: none"*)
+            echo "Note: folder scans from the console are off on this machine. To allow them, run this installer again with"
+            echo "  --scan-roots /srv,/var/www (no token needed), or: clamav-agent set-scan-roots /srv /var/www && systemctl restart clamav-agent"
             ;;
     esac
 }
@@ -507,6 +542,7 @@ install_agent() {
         fi
     fi
     unset CAV_ENROLL_TOKEN
+    if [ "$scan_roots_set" = 1 ]; then apply_scan_roots "$CAV_SCAN_ROOTS"; fi
 
     chown root:root "$CONF_FILE"; chmod 0644 "$CONF_FILE"
     chown "$AGENT_USER:$AGENT_USER" "$STATE_DIR" "$CRED_FILE"
@@ -542,17 +578,20 @@ main() {
     token_stdin=0
     clamav_setup=1
     if [ "${CAV_CLAMAV_SETUP:-1}" = 0 ]; then clamav_setup=0; fi
+    scan_roots_set=0
+    if [ -n "${CAV_SCAN_ROOTS+x}" ]; then scan_roots_set=1; fi
     while [ $# -gt 0 ]; do
         case "$1" in
             --reinstall) reinstall=1 ;;
             --token-stdin) token_stdin=1 ;;
             --no-clamav-setup) clamav_setup=0 ;;
-            --server|--ca-sha256|--clamd)
+            --server|--ca-sha256|--clamd|--scan-roots)
                 [ $# -ge 2 ] || die "$1 needs a value"
                 case "$1" in
                     --server) CAV_SERVER_URL=$2 ;;
                     --ca-sha256) CAV_CA_SHA256=$2 ;;
                     --clamd) CAV_CLAMD_ADDR=$2 ;;
+                    --scan-roots) CAV_SCAN_ROOTS=$2; scan_roots_set=1 ;;
                 esac
                 shift
                 ;;
