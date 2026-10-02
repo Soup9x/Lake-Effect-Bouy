@@ -15,13 +15,21 @@
 #   --ca-sha256 HEX     CAV_CA_SHA256     only for a console with a private CA:
 #                                         SHA-256 fingerprint of its CA certificate
 #   --clamd ADDR        CAV_CLAMD_ADDR    clamd address (unix:///path or
-#                                         tcp://127.0.0.1:3310); default: auto-detect
+#                                         tcp://127.0.0.1:3310); default: auto-detect.
+#                                         Implies --no-clamav-setup.
+#   --no-clamav-setup   CAV_CLAMAV_SETUP=0  leave ClamAV alone (see below)
 #   --reinstall                           enroll again with a new token
 #
 # The agent binary and the systemd unit are downloaded from
 # $CAV_SERVER_URL/downloads/ and their minisign signatures are VERIFIED against
 # the public key embedded below before anything is installed. The key is
 # never fetched from the server.
+#
+# ClamAV setup (Debian/Ubuntu, unless --no-clamav-setup): installs
+# clamav-daemon if clamd is missing, enables freshclam and waits for the
+# virus databases, turns on clamd's VERSION and RELOAD commands where
+# clamd.conf lists them as off (the original is kept as clamd.conf.cav-orig),
+# and starts clamd. Other distributions get instructions instead.
 #
 # With --ca-sha256, the console's CA certificate is downloaded and used only
 # if its fingerprint matches; it is installed for the agent, which then trusts
@@ -41,6 +49,8 @@ CRED_FILE=$STATE_DIR/credential
 CA_FILE=$CONF_DIR/console-ca.pem
 AGENT_USER=clamav-agent
 SOCKET_CANDIDATES="/run/clamav/clamd.ctl /run/clamd.scan/clamd.sock /var/run/clamav/clamd.ctl"
+CLAMD_CONF=/etc/clamav/clamd.conf
+CLAMAV_DB=/var/lib/clamav
 
 WORK=''
 # CA bundle for downloads from the console (private CA), or empty for the
@@ -265,9 +275,122 @@ join_socket_group() { # SOCKET_PATH
     esac
 }
 
+# ---------------------------------------------------------------------------
+# ClamAV setup
+# ---------------------------------------------------------------------------
+
+clamd_installed() { command -v clamd >/dev/null 2>&1 || [ -x /usr/sbin/clamd ]; }
+
+db_ready() { # the main and daily signature databases are both present
+    { [ -f "$CLAMAV_DB/main.cvd" ] || [ -f "$CLAMAV_DB/main.cld" ]; } &&
+        { [ -f "$CLAMAV_DB/daily.cvd" ] || [ -f "$CLAMAV_DB/daily.cld" ]; }
+}
+
+# enable_clamd_command NAME: switch on a clamd command that clamd.conf lists
+# as off. Returns 0 if the file changed. An option clamd.conf does not list is
+# left alone: older clamd refuses to start on an option it does not know.
+enable_clamd_command() {
+    grep -Eqi "^[[:space:]]*$1[[:space:]]+(no|false)[[:space:]]*$" "$CLAMD_CONF" || return 1
+    [ -f "$CLAMD_CONF.cav-orig" ] || cp -p "$CLAMD_CONF" "$CLAMD_CONF.cav-orig"
+    sed -i -E "s/^[[:space:]]*$1[[:space:]]+[A-Za-z]+[[:space:]]*$/$1 yes/" "$CLAMD_CONF"
+    say "set $1 yes in $CLAMD_CONF (original kept as $CLAMD_CONF.cav-orig)"
+    return 0
+}
+
+# setup_clamav: make sure clamd is installed, has its databases, answers
+# VERSION, and is running. Never fatal: the agent installs either way and
+# the final check says what is left to do.
+setup_clamav() {
+    if ! clamd_installed; then
+        if ! command -v apt-get >/dev/null 2>&1; then
+            echo "WARNING: ClamAV (clamd) is not installed, and this installer only installs it on Debian/Ubuntu." >&2
+            echo "         Install and start clamd yourself (RHEL/Rocky/Alma: dnf install clamd clamav-update from EPEL)," >&2
+            echo "         then run this installer again; no token is needed." >&2
+            return 0
+        fi
+        say "installing ClamAV (clamav-daemon, clamav-freshclam); this can take a minute"
+        DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 update -qq >/dev/null ||
+            echo "WARNING: apt-get update failed; trying the install anyway" >&2
+        if ! DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y -qq clamav-daemon clamav-freshclam >/dev/null; then
+            echo "WARNING: could not install ClamAV with apt-get; install clamav-daemon yourself, then run this installer again." >&2
+            return 0
+        fi
+    fi
+    if ! systemctl cat clamav-daemon.service >/dev/null 2>&1 || ! systemctl cat clamav-freshclam.service >/dev/null 2>&1; then
+        say "clamd is not set up as Debian/Ubuntu's clamav-daemon service here; leaving it as it is"
+        return 0
+    fi
+
+    systemctl enable --now clamav-freshclam.service >/dev/null 2>&1 ||
+        echo "WARNING: could not start clamav-freshclam; see: journalctl -u clamav-freshclam" >&2
+    if ! db_ready; then
+        say "waiting for freshclam to download the virus databases (usually under a minute)"
+        _i=0
+        while ! db_ready && [ "$_i" -lt 60 ]; do sleep 5; _i=$((_i + 1)); done
+        db_ready || echo "WARNING: no virus databases in $CLAMAV_DB yet, and clamd cannot start without them; see: journalctl -u clamav-freshclam" >&2
+    fi
+
+    _changed=0
+    if [ -f "$CLAMD_CONF" ]; then
+        if enable_clamd_command EnableVersionCommand; then _changed=1; fi
+        if enable_clamd_command EnableReloadCommand; then _changed=1; fi
+    fi
+    systemctl enable clamav-daemon.service >/dev/null 2>&1 || true
+    if [ "$_changed" = 1 ] || ! systemctl is-active --quiet clamav-daemon.service; then
+        say "starting clamav-daemon"
+        systemctl restart clamav-daemon.service ||
+            echo "WARNING: clamav-daemon did not start; see: journalctl -u clamav-daemon" >&2
+    fi
+    # The socket appears as soon as clamd (or its systemd socket) is up.
+    _i=0
+    while [ -z "$(detect_socket)" ] && [ "$_i" -lt 12 ]; do sleep 5; _i=$((_i + 1)); done
+}
+
+# final_check: wait (a few minutes at most) for the agent to reach clamd,
+# then say plainly whether anything is left to do.
+final_check() {
+    _i=0
+    while :; do
+        _out=$("$BIN_DST" status --config "$CONF_FILE" --credential "$CRED_FILE" 2>&1 || true)
+        case "$_out" in
+            *"permission denied"*) break ;;      # waiting will not fix this
+            *"clamd status: not_responding"*) ;; # clamd may still be loading its databases
+            *) break ;;
+        esac
+        [ "$_i" -lt 36 ] || break
+        if [ "$_i" = 0 ]; then say "waiting for clamd to answer (it loads its databases first; this can take a minute or two)"; fi
+        _i=$((_i + 1))
+        sleep 5
+    done
+    printf '%s\n' "$_out"
+    echo
+    case "$_out" in
+        *"clamd status: running"*"error:"*)
+            echo "ACTION NEEDED: clamd answers, but reported the error above." >&2
+            echo "  If it says the VERSION command is disabled: set \"EnableVersionCommand yes\" in $CLAMD_CONF," >&2
+            echo "  then run: systemctl restart clamav-daemon" >&2
+            ;;
+        *"clamd status: running"*)
+            say "ALL SET: the agent reports this machine's ClamAV status to $base"
+            ;;
+        *"clamd status: not_installed"*)
+            echo "ACTION NEEDED: ClamAV (clamd) is not installed. Install and start it, then run this installer again (no token needed)." >&2
+            ;;
+        *"permission denied"*|*"group"*)
+            echo "ACTION NEEDED: the agent cannot open clamd's socket. Run this installer again once clamd is running (no token needed)," >&2
+            echo "  or add the clamav-agent user to the socket's group and run: systemctl restart clamav-agent" >&2
+            ;;
+        *)
+            echo "ACTION NEEDED: clamd is not answering. Check: systemctl status clamav-daemon; journalctl -u clamav-daemon -n 30" >&2
+            echo "  (On a small VM clamd may need more memory: about 1.5 GB.) The agent keeps retrying; once clamd is up, nothing else is needed." >&2
+            ;;
+    esac
+}
+
 install_agent() {
     reinstall=$1
     token_stdin=$2
+    clamav_setup=$3
     if [ "$token_stdin" = 1 ]; then
         # Read before anything else consumes stdin. The token never appears
         # on a command line.
@@ -329,6 +452,10 @@ install_agent() {
     minisign_verify "$WORK/clamav-agent.service" "$WORK/clamav-agent.service.minisig" || die "signature verification failed for clamav-agent.service; NOT installing"
 
     ensure_user
+
+    if [ "$clamav_setup" = 1 ] && [ -z "${CAV_CLAMD_ADDR:-}" ]; then
+        setup_clamav
+    fi
 
     if [ -n "${CAV_CLAMD_ADDR:-}" ]; then
         clamd_addr=$CAV_CLAMD_ADDR
@@ -392,11 +519,11 @@ install_agent() {
     systemctl restart clamav-agent.service
     sleep 2
     if systemctl is-active --quiet clamav-agent.service; then
-        say "clamav-agent is running"
+        say "the clamav-agent service is running"
     else
-        echo "WARNING: clamav-agent is not running; see: journalctl -u clamav-agent" >&2
+        echo "WARNING: the clamav-agent service is not running; see: journalctl -u clamav-agent" >&2
     fi
-    "$BIN_DST" status --config "$CONF_FILE" --credential "$CRED_FILE" || true
+    final_check
 }
 
 usage() {
@@ -413,10 +540,13 @@ main() {
     fi
     reinstall=0
     token_stdin=0
+    clamav_setup=1
+    if [ "${CAV_CLAMAV_SETUP:-1}" = 0 ]; then clamav_setup=0; fi
     while [ $# -gt 0 ]; do
         case "$1" in
             --reinstall) reinstall=1 ;;
             --token-stdin) token_stdin=1 ;;
+            --no-clamav-setup) clamav_setup=0 ;;
             --server|--ca-sha256|--clamd)
                 [ $# -ge 2 ] || die "$1 needs a value"
                 case "$1" in
@@ -431,7 +561,7 @@ main() {
         esac
         shift
     done
-    install_agent "$reinstall" "$token_stdin"
+    install_agent "$reinstall" "$token_stdin" "$clamav_setup"
 }
 
 main "$@"

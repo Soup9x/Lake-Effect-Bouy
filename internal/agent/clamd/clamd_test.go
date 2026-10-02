@@ -3,6 +3,7 @@ package clamd
 import (
 	"bufio"
 	"context"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -197,6 +198,9 @@ func TestStatusConnectionRefusedTCP(t *testing.T) {
 }
 
 func TestParseVersion(t *testing.T) {
+	if _, err := ParseVersion("COMMAND UNAVAILABLE\x00"); !errors.Is(err, ErrVersionDisabled) || len(err.Error()) > MaxErrorLen {
+		t.Fatalf("disabled VERSION: %v", err)
+	}
 	loc := time.FixedZone("X", 2*3600)
 	v, err := parseVersionIn("ClamAV 1.4.1/27410/Tue Sep 30 08:01:00 2026\x00", loc)
 	if err != nil {
