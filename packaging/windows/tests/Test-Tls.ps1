@@ -95,6 +95,10 @@ foreach ($impostorName in @('Test Local Authority', 'Attacker CA')) {
     [void]$presented.Build($impostorLeaf)
     Assert-Check ('impostor chain with its own root "' + $impostorName + '"') ([CavMinisign.Tls]::ChainsTo($caPublic, $impostorLeaf, $presented, $none)) $false
 }
+# The callback the installer hands to each download.
+$callback = [CavMinisign.Tls]::PinnedTo($caPublic)
+Assert-Check 'PinnedTo callback, pinned CA' ($callback.Invoke($null, $leaf, $null, $none)) $true
+Assert-Check 'PinnedTo callback, impostor CA' ([CavMinisign.Tls]::PinnedTo($otherPublic).Invoke($null, $leaf, $null, $none)) $false
 $expired = New-TestLeaf $caRoot ([DateTimeOffset]::UtcNow.AddMinutes(-5))
 Assert-Check 'expired leaf' ([CavMinisign.Tls]::ChainsTo($caPublic, $expired, $null, $none)) $false
 
